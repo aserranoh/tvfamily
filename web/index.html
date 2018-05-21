@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<body>
+    <ul>
+        {% for c in categories %}
+            <li><a href="/categories/{{c.key}}">{{c.name}}</a></li>
+        {% end %}
+    </ul>
+    <hr>
+    <ul>
+        {% if titles %}
+            {% for t in sorted(titles, key=lambda t: t.title) %}
+                <li><a href="/title/{{t.id}}">{{t.title}}</a></li>
+            {% end %}
+        {% else %}
+            <p>No titles in this category.</p>
+        {% end %}
+        
+    </ul>
+</body>
+</html>
+
