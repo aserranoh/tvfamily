@@ -20,8 +20,11 @@ along with tvfamily; see the file COPYING.  If not, see
 <http://www.gnu.org/licenses/>.
 '''
 
+import glob
+import json
 import os
 import re
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
 
@@ -236,10 +239,17 @@ class Video(object):
       * filename: video file name.
     '''
 
+    _EXTENSIONS = ['.mp4']
+
     def __init__(self, path, filename):
         self._path = path
         self._filename = filename
         self._container = None
+        self._subtitles = None
+
+    def get_abspath(self):
+        '''Return the absolute path to this video file.'''
+        return os.path.join(*self._path, self._filename)
 
     def get_container(self):
         '''Return the container type of this video file.'''
@@ -247,13 +257,51 @@ class Video(object):
             self._container = tvfamily.PTN.parse(self._filename)['container']
         return self._container
 
-    def get_abspath(self):
-        '''Return the absolute path to this video file.'''
-        return os.path.join(*self._path, self._filename)
-
     def get_size(self):
         '''Return the size of this video file.'''
         return os.path.getsize(self.get_abspath())
+
+    def get_subtitle(self, track):
+        '''Return a given subtitles track.'''
+        return self._subtitles[track]
+
+    def get_subtitles(self):
+        '''Return the available subtitles for this video.'''
+        if self._subtitles is None:
+            basename = self._filename.rpartition('.')[0]
+            subs_files = glob.iglob(
+                os.path.join(*self._path, glob.escape(basename) + '_*.vtt'))
+            self._subtitles = [Subtitle(self._path, os.path.basename(f),
+                len(basename)) for f in subs_files]
+        return self._subtitles
+
+    @classmethod
+    def is_video(cls, path):
+        '''Return True if the file in path corresponds to a video.'''
+        for e in cls._EXTENSIONS:
+            if path.endswith(e):
+                return True
+        return False
+
+
+class Subtitle(object):
+    '''Represents a subtitle for a video.
+
+    Constructor parameters:
+      * path: path to the video file (list of components).
+      * filename: video file name.
+      * prefix_len: the lenght of the prefix in filename before the subtitle
+          label and extension.
+    '''
+
+    def __init__(self, path, filename, prefix_len):
+        self._path = path
+        self._filename = filename
+        self.label = filename[prefix_len + 1:].rpartition('.')[0]
+
+    def get_abspath(self):
+        '''Return the absolute path to this video file.'''
+        return os.path.join(*self._path, self._filename)
 
 
 class Title(object):
@@ -264,19 +312,9 @@ class Title(object):
       * path: directory that contains this title (list of components)
     '''
 
-    _VIDEO_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.webm']
-
     def __init__(self, id, path):
         self.id = id
         self.path = path
-
-    @classmethod
-    def is_video(cls, path):
-        '''Return True if the file in path corresponds to a video.'''
-        for e in cls._VIDEO_EXTENSIONS:
-            if path.endswith(e):
-                return True
-        return False
 
 
 class TVSerie(Title):
@@ -302,7 +340,7 @@ class TVSerie(Title):
         '''Search the episodes for this tv serie in path.'''
         self._episodes = {}
         for filename in os.listdir(path):
-            if self.is_video(filename):
+            if Video.is_video(filename):
                 # This file is a video, extract season and episode numbers
                 # and create the episode instance
                 episode_info = tvfamily.PTN.parse(filename)
@@ -436,7 +474,7 @@ class StreamsManager(object):
         if container in ['mp4', 'webm']:
             stream = FileStream(self._next_stream_id, video)
         else:
-            stream = FfmpegStream(self._next_stream_id, video)
+            raise NotImplementedError()
         self._streams[stream.id] = stream
         self._next_stream_id += 1
         return stream

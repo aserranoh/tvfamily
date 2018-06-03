@@ -41,7 +41,7 @@ SECRET_BITS = 128
 class BaseHandler(tornado.web.RequestHandler):
     '''Base class to iplement a http request handler.'''
 
-    def initialize(self, core):
+    def initialize(self, core=None):
         '''Pass the core of the application to the handlers.
 
         Parameters:
@@ -119,8 +119,12 @@ class PlayEpisodeHandler(BaseHandler):
         title = self._core.get_title(int(title_id))
         video = title.get_episode(int(season), int(episode)).get_video()
         stream = self._core.new_stream(video)
+        subtitles_track = int(self.get_query_argument('subtitles'))
+        subtitles = None
+        if subtitles_track >= 0:
+            subtitles = video.get_subtitle(subtitles_track)
         self.render('playepisode.html', title=title, season=season,
-            episode=episode, stream=stream)
+            episode=episode, stream=stream, subtitles=subtitles)
 
 class VideoHandler(BaseHandler):
     '''Serves a video in chunks.'''
@@ -149,10 +153,7 @@ class VideoHandler(BaseHandler):
         if request_range:
             start, end = request_range
             size = stream.get_size()
-            wrong = ((start is not None and size is not None and start >= size)
-                or end == 0
-                or (start is not None and start < 0))
-            if wrong:
+            if (start is not None and start >= size) or end == 0:
                 # As per RFC 2616 14.35.1, a range is not satisfiable only: if
                 # the first requested byte is equal to or greater than the
                 # content, or when a suffix with length 0 is specified
@@ -160,7 +161,9 @@ class VideoHandler(BaseHandler):
                 self.set_header("Content-Type", "text/plain")
                 self.set_header("Content-Range", "bytes */%s" % (size, ))
                 return
-            if end is not None and size is not None and end > size:
+            if start is not None and start < 0:
+                start += size
+            if end is not None and end > size:
                 # Clients sometimes blindly use a large range to limit their
                 # download size; cap the endpoint at the actual file size.
                 end = size
@@ -181,8 +184,18 @@ class VideoHandler(BaseHandler):
         self.set_status(206)
         self.set_header('Content-Type', 'video/mp4')
         self.set_header('Accept-Ranges', 'bytes')
-        self.set_header("Content-Range",
+        self.set_header('Content-Range',
             tornado.httputil._get_content_range(start, end, size))
+
+
+class SubtitlesHandler(BaseHandler):
+    '''Serves a vtt subtitles file.'''
+
+    def get(self, filename):
+        '''Send the subtitle filename to the client.'''
+        with open(filename, 'r') as f:
+            self.write(f.read())
+
 
 class HTTPServer(object):
     '''The HTTP server that serves the pages to the user.
@@ -206,6 +219,7 @@ class HTTPServer(object):
             (r'/play/(\d+)/s(\d+)/e(\d+)', PlayEpisodeHandler,
                 dict(core=self._core)),
             (r'/stream/(\d+)', VideoHandler, dict(core=self._core)),
+            (r'(.*?\.vtt)', SubtitlesHandler)
             ]
         self._app = tornado.web.Application(handlers, **settings)
 

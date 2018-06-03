@@ -8,15 +8,23 @@
         {% end %}
     </ul>
     <hr>
-    <h2>Season {{s}}</h2>
+    <h2>Season {{season}}</h2>
     <ul>
         {% for e in title.get_episodes(season) %}
-            <li><a href="/title/{{title.id}}?season={{s}}&episode={{e.episode}}">Episode {{e.episode}}</a></li>
+            <li><a href="/title/{{title.id}}?season={{season}}&episode={{e.episode}}">Episode {{e.episode}}</a></li>
         {% end %}
     </ul>
     <hr>
     <h2>Episode {{episode}}</h2>
-    <a href="/play/{{title.id}}/s{{season}}/e{{episode}}">Play</a>
+    <form action="/play/{{title.id}}/s{{season}}/e{{episode}}">
+        <select name="subtitles">
+            <option value="-1">No subtitles</option>
+            {% for e, s in enumerate(title.get_episode(season, episode).get_video().get_subtitles()) %}
+                <option value="{{e}}">{{s.label}}</option>
+            {% end %}
+        </select>
+        <input type="submit" value="Play">
+    </form>
     <hr>
     <a href="/">Back to list</a>
 </body>
