@@ -106,9 +106,9 @@ class Core(object):
         '''Return the list of titles of a given category.'''
         return self._titles_db.get_titles(category)
 
-    def get_title(self, title_id):
-        '''Return the title with the given title_id.'''
-        return self._titles_db.get_title(title_id)
+    def get_title(self, category, name):
+        '''Return the title within category called name.'''
+        return self._titles_db.get_title(category, name)
 
     # Functions to manage streams
 
@@ -220,12 +220,11 @@ class Category(object):
         self.key = RE_KEY.sub('_', name.lower())
         self.title_class = title_class
 
-    def get_title(self, path, title, id):
-        '''Return an instance for the title at title_path. id is the identifier
-        for this new title in the database.
+    def get_title(self, path):
+        '''Return an instance for the title whose element is at path.
         '''
         try:
-            return self.title_class(path, title, id)
+            return self.title_class(path)
         except TypeError:
             # The given file doesn't correspond to this category
             return None
@@ -235,41 +234,35 @@ class Video(object):
     '''Represents a video (movie or tv series episode).
 
     Constructor parameters:
-      * path: path to the video file (list of components).
-      * filename: video file name.
+      * path: path to the video file.
     '''
 
     _EXTENSIONS = ['.mp4']
 
-    def __init__(self, path, filename):
-        self._path = path
-        self._filename = filename
+    def __init__(self, path):
+        self.path = path
         self._container = None
         self._subtitles = None
-
-    def get_abspath(self):
-        '''Return the absolute path to this video file.'''
-        return os.path.join(*self._path, self._filename)
 
     def get_container(self):
         '''Return the container type of this video file.'''
         if not self._container:
-            self._container = tvfamily.PTN.parse(self._filename)['container']
+            self._container = tvfamily.PTN.parse(
+                os.path.basename(self.path))['container']
         return self._container
 
     def get_size(self):
         '''Return the size of this video file.'''
-        return os.path.getsize(self.get_abspath())
+        return os.path.getsize(self.path)
 
     def get_subtitles(self):
         '''Return the available subtitles for this video.'''
-        if self._subtitles is None:
-            basename = self._filename.rpartition('.')[0]
-            subs_files = glob.iglob(
-                os.path.join(*self._path, glob.escape(basename) + '_*.vtt'))
-            self._subtitles = [Subtitle(self._path, os.path.basename(f),
-                len(basename)) for f in subs_files]
-        return self._subtitles
+        filename = os.path.basename(self.path)
+        basename = filename.rpartition('.')[0]
+        pattern = os.path.join(
+            os.path.dirname(self.path), glob.escape(basename) + '_*.vtt')
+        for f in glob.iglob(pattern):
+            yield Subtitle(f, len(basename))
 
     @classmethod
     def is_video(cls, path):
@@ -284,20 +277,15 @@ class Subtitle(object):
     '''Represents a subtitle for a video.
 
     Constructor parameters:
-      * path: path to the video file (list of components).
-      * filename: video file name.
+      * path: path to the subtitle file.
       * prefix_len: the lenght of the prefix in filename before the subtitle
           label and extension.
     '''
 
-    def __init__(self, path, filename, prefix_len):
-        self._path = path
-        self._filename = filename
-        self.label = filename[prefix_len + 1:].rpartition('.')[0]
-
-    def get_abspath(self):
-        '''Return the absolute path to this video file.'''
-        return os.path.join(*self._path, self._filename)
+    def __init__(self, path, prefix_len):
+        self.path = path
+        self.label = os.path.basename(
+            self.path)[prefix_len + 1:].rpartition('.')[0]
 
 
 class Title(object):
@@ -308,8 +296,7 @@ class Title(object):
       * path: directory that contains this title (list of components)
     '''
 
-    def __init__(self, id, path):
-        self.id = id
+    def __init__(self, path):
         self.path = path
 
 
@@ -322,51 +309,62 @@ class TVSerie(Title):
       * id: id of this title in the database.
     '''
 
-    def __init__(self, path, title, id):
-        super(TVSerie, self).__init__(id, path)
+    def __init__(self, path):
+        super(TVSerie, self).__init__(path)
         # TV Series must be directories (that contain the episodes)
-        series_dir = os.path.join(*path, title)
-        if not os.path.isdir(series_dir):
+        if not os.path.isdir(path):
             raise TypeError("path doesn't correspond to a tv serie")
-        self.title = title
-        # Add the episodes
-        self._add_episodes(series_dir)
+        self.path = path
+        self._episodes = None
 
-    def _add_episodes(self, path):
-        '''Search the episodes for this tv serie in path.'''
+    def _add_episodes(self):
+        '''Search the episodes for this tv serie.'''
         self._episodes = {}
-        for filename in os.listdir(path):
+        for filename in os.listdir(self.path):
             if Video.is_video(filename):
                 # This file is a video, extract season and episode numbers
                 # and create the episode instance
                 episode_info = tvfamily.PTN.parse(filename)
                 season_n = episode_info['season']
                 episode_n = episode_info['episode']
-                e = Episode(season_n, episode_n, self.path + [self.title],
-                    filename)
                 # Add the episode to the dictionary of episodes
                 try:
-                    season = self._episodes[season_n][episode_n] = e
+                    self._episodes[season_n][episode_n] = filename
                 except KeyError:
-                    self._episodes[season_n] = {episode_n: e}
+                    self._episodes[season_n] = {episode_n: filename}
+
+    @property
+    def filename(self):
+        return os.path.basename(self.path)
 
     def get_episode(self, season, episode):
         '''Return the given episode of this tv series.'''
-        return self._episodes[season][episode]
+        if self._episodes is None:
+            self._add_episodes()
+        return Episode(season, episode,
+            os.path.join(self.path, self._episodes[season][episode]))
 
     def get_episodes(self, season):
         '''Return the list of avaliable episodes of a given season for this
         title.
         '''
-        return sorted(self._episodes[season].values(), key=lambda e: e.episode)
+        if self._episodes is None:
+            self._add_episodes()
+        return sorted(self._episodes[season].keys())
 
     def get_seasons(self):
         '''Return the seasons available for this title.'''
+        if self._episodes is None:
+            self._add_episodes()
         return sorted(self._episodes.keys())
 
     def has_episodes(self):
         '''Return True if this title has episodes, so True for TVSeries.'''
         return True
+
+    @property
+    def title(self):
+        return os.path.basename(self.path)
 
 
 class Episode(object):
@@ -379,10 +377,10 @@ class Episode(object):
       * filename: video file name.
     '''
 
-    def __init__(self, season, episode, path, filename):
+    def __init__(self, season, episode, path):
         self.season = season
         self.episode = episode
-        self._video = Video(path, filename)
+        self._video = Video(path)
 
     def get_video(self):
         '''Return the video associated with this episode.'''
@@ -422,35 +420,27 @@ class TitlesDB(object):
 
     def __init__(self, categories, path):
         self._categories = categories
-        self._titles = {}
-        self._titles_by_category = {}
-        # ID for the next title
-        self._next_id = 0
-        # Search for videos in every category
-        for category in categories:
-            self._titles_by_category[category.key] = []
-            # Get the path where the videos of a category are
-            for title in os.listdir(os.path.join(path, category.key)):
-                t = category.get_title(
-                    [path, category.key], title, self._next_id)
-                # The instance may be None, if the file doesn't correspont to
-                # a media of this cathegory
-                if t:
-                    self._titles[t.id] = t
-                    self._titles_by_category[category.key].append(t)
-                    self._next_id += 1
+        self._dict_categories = dict((c.key, c) for c in categories)
+        self._root_path = path
 
     def get_categories(self):
         '''Return the list of categories.'''
-        return self._categories
+        for c in self._categories:
+            yield c
 
-    def get_title(self, title_id):
-        '''Return the title with the given title_id.'''
-        return self._titles[title_id]
+    def get_title(self, category, name):
+        '''Return the title within the given category and called name.'''
+        filename = os.path.join(self._root_path, category, name)
+        return self._dict_categories[category].get_title(filename)
 
     def get_titles(self, category):
         '''Return the list of titles of a given category.'''
-        return self._titles_by_category[category]
+        category_path = os.path.join(self._root_path, category)
+        for f in sorted(os.listdir(category_path)):
+            filename = os.path.join(category_path, f)
+            t = self._dict_categories[category].get_title(filename)
+            if t:
+                yield t
 
 
 class StreamsManager(object):
@@ -496,7 +486,7 @@ class FileStream(object):
         '''
         read = 0
         to_read = self._CHUNK_SIZE
-        with open(self._video.get_abspath(), "rb") as f:
+        with open(self._video.path, "rb") as f:
             start = start or 0
             f.seek(start)
             while end is None or start + read < end:

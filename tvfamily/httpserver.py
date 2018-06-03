@@ -58,8 +58,8 @@ class RootHandler(BaseHandler):
         The root page must redirect to the list of media of the first
         category.
         '''
-        categories = self._core.get_categories()
-        self.redirect('/categories/{}'.format(categories[0].key))
+        category = next(self._core.get_categories())
+        self.redirect('/categories/{}'.format(category.key))
 
 class CategoriesHandler(BaseHandler):
     '''Index page's handler (list of medias of a category).'''
@@ -69,27 +69,25 @@ class CategoriesHandler(BaseHandler):
 
         category is the name of the current category.
         '''
-        categories = self._core.get_categories()
-        category = [c for c in categories if c.key == category][0]
-        titles = self._core.get_titles(category.key)
         self.render('index.html',
-            categories=categories, current=category.key, titles=titles)
+            categories=self._core.get_categories(), current=category,
+            titles=self._core.get_titles(category))
 
 class TitleHandler(BaseHandler):
     '''Title main page.'''
 
-    def get(self, title_id):
-        '''Serves the page with the caracteristics of a title.
-
-        title_id is the identifier of the title in the database.
-        '''
-        title = self._core.get_title(int(title_id))
+    def get(self):
+        '''Serves the page with the caracteristics of a title.'''
+        category = self.get_query_argument('category')
+        id = self.get_query_argument('id')
+        title = self._core.get_title(category, id)
         if title.has_episodes():
             self._serve_episode(title)
         else:
             self._serve_movie(title)
 
     def _serve_episode(self, title):
+        '''Serve the page episode.html.'''
         # Get the season number
         try:
             season = int(self.get_query_argument('season'))
@@ -99,28 +97,29 @@ class TitleHandler(BaseHandler):
         try:
             episode = int(self.get_query_argument('episode'))
         except tornado.web.MissingArgumentError:
-            episode = title.get_episodes(season)[0].episode
+            episode = title.get_episodes(season)[0]
         # Render the page
-        self.render('episode.html', title=title, season=season,
-            episode=episode)
+        self.render('episode.html',
+            category=self.get_query_argument('category'), title=title,
+            season=season, episode=episode)
 
     def _serve_movie(self, title):
-        '''Serves the page movie.html.'''
+        '''Serve the page movie.html.'''
         self.render('movie.html', title=title)
 
 class PlayEpisodeHandler(BaseHandler):
     '''Handler of the page to play an episode of a series.'''
 
-    def get(self, title_id, season, episode):
-        '''Serves the page with the video player.
-
-        title_id is the identifier of the title in the database.
-        '''
-        title = self._core.get_title(int(title_id))
-        video = title.get_episode(int(season), int(episode)).get_video()
+    def get(self):
+        '''Serves the page with the video player.'''
+        category = self.get_query_argument('category')
+        title = self._core.get_title(category, self.get_query_argument('id'))
+        season = int(self.get_query_argument('season'))
+        episode = int(self.get_query_argument('episode'))
+        video = title.get_episode(season, episode).get_video()
         stream = self._core.new_stream(video)
-        self.render('playepisode.html', title=title, season=int(season),
-            episode=int(episode), stream=stream)
+        self.render('playepisode.html', category=category, title=title,
+            season=season, episode=episode, stream=stream)
 
 class VideoHandler(BaseHandler):
     '''Serves a video in chunks.'''
@@ -211,9 +210,8 @@ class HTTPServer(object):
         handlers = [
             (r'/', RootHandler, dict(core=self._core)),
             (r'/categories/(.+)', CategoriesHandler, dict(core=self._core)),
-            (r'/title/(\d+)', TitleHandler, dict(core=self._core)),
-            (r'/play/(\d+)/s(\d+)/e(\d+)', PlayEpisodeHandler,
-                dict(core=self._core)),
+            (r'/title', TitleHandler, dict(core=self._core)),
+            (r'/play', PlayEpisodeHandler, dict(core=self._core)),
             (r'/stream/(\d+)', VideoHandler, dict(core=self._core)),
             (r'(.*?\.vtt)', SubtitlesHandler)
             ]

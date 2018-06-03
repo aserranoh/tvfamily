@@ -9,8 +9,8 @@
     <hr>
     <ul>
         {% if titles %}
-            {% for t in sorted(titles, key=lambda t: t.title) %}
-                <li><a href="/title/{{t.id}}">{{t.title}}</a></li>
+            {% for t in titles %}
+                <li><a href="/title?category={{current}}&id={{t.filename}}">{{t.title}}</a></li>
             {% end %}
         {% else %}
             <p>No titles in this category.</p>

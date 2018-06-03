@@ -4,19 +4,19 @@
     <h1>{{title.title}}</h1>
     <ul>
         {% for s in title.get_seasons() %}
-            <li><a href="/title/{{title.id}}?season={{s}}">Season {{s}}</a></li>
+            <li><a href="/title?category={{category}}&id={{title.filename}}&season={{s}}">Season {{s}}</a></li>
         {% end %}
     </ul>
     <hr>
     <h2>Season {{season}}</h2>
     <ul>
         {% for e in title.get_episodes(season) %}
-            <li><a href="/title/{{title.id}}?season={{season}}&episode={{e.episode}}">Episode {{e.episode}}</a></li>
+            <li><a href="/title?category={{category}}&id={{title.filename}}&season={{season}}&episode={{e}}">Episode {{e}}</a></li>
         {% end %}
     </ul>
     <hr>
     <h2>Episode {{episode}}</h2>
-    <a href="/play/{{title.id}}/s{{season}}/e{{episode}}">Play</a>
+    <a href="/play?category={{category}}&id={{title.filename}}&season={{season}}&episode={{episode}}">Play</a>
     <hr>
     <a href="/">Back to list</a>
 </body>
