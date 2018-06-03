@@ -261,10 +261,6 @@ class Video(object):
         '''Return the size of this video file.'''
         return os.path.getsize(self.get_abspath())
 
-    def get_subtitle(self, track):
-        '''Return a given subtitles track.'''
-        return self._subtitles[track]
-
     def get_subtitles(self):
         '''Return the available subtitles for this video.'''
         if self._subtitles is None:

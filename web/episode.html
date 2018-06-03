@@ -16,15 +16,7 @@
     </ul>
     <hr>
     <h2>Episode {{episode}}</h2>
-    <form action="/play/{{title.id}}/s{{season}}/e{{episode}}">
-        <select name="subtitles">
-            <option value="-1">No subtitles</option>
-            {% for e, s in enumerate(title.get_episode(season, episode).get_video().get_subtitles()) %}
-                <option value="{{e}}">{{s.label}}</option>
-            {% end %}
-        </select>
-        <input type="submit" value="Play">
-    </form>
+    <a href="/play/{{title.id}}/s{{season}}/e{{episode}}">Play</a>
     <hr>
     <a href="/">Back to list</a>
 </body>

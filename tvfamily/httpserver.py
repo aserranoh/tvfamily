@@ -119,12 +119,8 @@ class PlayEpisodeHandler(BaseHandler):
         title = self._core.get_title(int(title_id))
         video = title.get_episode(int(season), int(episode)).get_video()
         stream = self._core.new_stream(video)
-        subtitles_track = int(self.get_query_argument('subtitles'))
-        subtitles = None
-        if subtitles_track >= 0:
-            subtitles = video.get_subtitle(subtitles_track)
-        self.render('playepisode.html', title=title, season=season,
-            episode=episode, stream=stream, subtitles=subtitles)
+        self.render('playepisode.html', title=title, season=int(season),
+            episode=int(episode), stream=stream)
 
 class VideoHandler(BaseHandler):
     '''Serves a video in chunks.'''
