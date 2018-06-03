@@ -73,8 +73,12 @@ def process_video(path, filename):
         if video_codec == 'h264' and audio_codec == 'aac':
             # Extract the subtitles
             for i, s in enumerate(subtitles):
+                try:
+                    label = s['tags']['title']
+                except KeyError:
+                    label = s['tags']['language']
                 sub_filename = os.path.join(
-                    path, '{}_{}.vtt'.format(base, s['tags']['title']))
+                    path, '{}_{}.vtt'.format(base, label))
                 cmd = ['ffmpeg', '-y', '-v', 'quiet', '-i', abspath, '-map',
                     '0:s:{}'.format(i), sub_filename]
                 p = subprocess.run(cmd)

@@ -69,9 +69,6 @@ class Core(object):
             self.error('no videos.path defined')
             raise
 
-        # Build the streams manager
-        self._streams_manager = StreamsManager()
-
     def _define_categories(self):
         '''Define the list of caterogies.'''
         return [
@@ -109,16 +106,6 @@ class Core(object):
     def get_title(self, category, name):
         '''Return the title within category called name.'''
         return self._titles_db.get_title(category, name)
-
-    # Functions to manage streams
-
-    def new_stream(self, video):
-        '''Create a new stream to watch a video.'''
-        return self._streams_manager.new_stream(video)
-
-    def get_stream(self, stream_id):
-        '''Return the stream identified by stream_id.'''
-        return self._streams_manager.get_stream(stream_id)
 
 
 class Option(object):
@@ -237,6 +224,7 @@ class Video(object):
       * path: path to the video file.
     '''
 
+    _CHUNK_SIZE = 64 * 1024
     _EXTENSIONS = ['.mp4']
 
     def __init__(self, path):
@@ -244,12 +232,39 @@ class Video(object):
         self._container = None
         self._subtitles = None
 
-    def get_container(self):
-        '''Return the container type of this video file.'''
+    @property
+    def container(self):
+        '''Return the video container.'''
         if not self._container:
             self._container = tvfamily.PTN.parse(
                 os.path.basename(self.path))['container']
         return self._container
+
+    def get_content(self, start=None, end=None):
+        '''Return an iterator that generates the bytes from this video,
+        from start to end, by chunks.
+        '''
+        read = 0
+        to_read = self._CHUNK_SIZE
+        with open(self.path, "rb") as f:
+            start = start or 0
+            f.seek(start)
+            while end is None or start + read < end:
+                if end and start + read + to_read > end:
+                    to_read = end - start - read
+                chunk = f.read(to_read)
+                if chunk:
+                    read += len(chunk)
+                    yield chunk
+                else:
+                    if end is None:
+                        return
+                    assert start + read == end
+                    return
+
+    def get_mime_type(self):
+        '''Return the mime type that corresponds to this video.'''
+        return 'video/{}'.format(self.container)
 
     def get_size(self):
         '''Return the size of this video file.'''
@@ -441,72 +456,4 @@ class TitlesDB(object):
             t = self._dict_categories[category].get_title(filename)
             if t:
                 yield t
-
-
-class StreamsManager(object):
-    '''Contains the streams currently being reproduced.'''
-
-    def __init__(self):
-        self._streams = {}
-        self._next_stream_id = 0
-
-    def get_stream(self, stream_id):
-        '''Return the stream identified by stream_id.'''
-        return self._streams[stream_id]
-
-    def new_stream(self, video):
-        '''Create a new stream from a video and return it.'''
-        container = video.get_container()
-        if container in ['mp4', 'webm']:
-            stream = FileStream(self._next_stream_id, video)
-        else:
-            raise NotImplementedError()
-        self._streams[stream.id] = stream
-        self._next_stream_id += 1
-        return stream
-
-
-class FileStream(object):
-    '''A video stream straight from a file.
-
-    Constructor parameters:
-      * id: identifier for this stream.
-      * video: source file for this stream.
-    '''
-
-    _CHUNK_SIZE = 64 * 1024
-
-    def __init__(self, id, video):
-        self.id = id
-        self._video = video
-
-    def get_content(self, start=None, end=None):
-        '''Return an iterator that generates the bytes from this video,
-        from start to end, by chunks.
-        '''
-        read = 0
-        to_read = self._CHUNK_SIZE
-        with open(self._video.path, "rb") as f:
-            start = start or 0
-            f.seek(start)
-            while end is None or start + read < end:
-                if end and start + read + to_read > end:
-                    to_read = end - start - read
-                chunk = f.read(to_read)
-                if chunk:
-                    read += len(chunk)
-                    yield chunk
-                else:
-                    if end is None:
-                        return
-                    assert start + read == end
-                    return
-
-    def get_mime_type(self):
-        '''Return the mime type that corresponds to this video.'''
-        return 'video/{}'.format(self._video.get_container())
-
-    def get_size(self):
-        '''Return the size of the video file.'''
-        return self._video.get_size()
 

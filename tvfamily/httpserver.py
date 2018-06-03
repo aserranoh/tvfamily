@@ -116,10 +116,8 @@ class PlayEpisodeHandler(BaseHandler):
         title = self._core.get_title(category, self.get_query_argument('id'))
         season = int(self.get_query_argument('season'))
         episode = int(self.get_query_argument('episode'))
-        video = title.get_episode(season, episode).get_video()
-        stream = self._core.new_stream(video)
         self.render('playepisode.html', category=category, title=title,
-            season=season, episode=episode, stream=stream)
+            season=season, episode=episode)
 
 class VideoHandler(BaseHandler):
     '''Serves a video in chunks.'''
@@ -136,10 +134,13 @@ class VideoHandler(BaseHandler):
         return None
 
     @tornado.gen.coroutine
-    def get(self, stream_id):
+    def get(self):
         request_range = None
         range_header = self.request.headers.get('Range')
-        stream = self._core.get_stream(int(stream_id))
+        q = self.get_query_argument
+        title = self._core.get_title(q('category'), q('id'))
+        video = title.get_episode(
+            int(q('season')), int(q('episode'))).get_video()
         # Obtain the start, end and total size of the range to serve
         if range_header:
             # As per RFC 2616 14.16, if an invalid Range header is specified,
@@ -147,7 +148,7 @@ class VideoHandler(BaseHandler):
             request_range = tornado.httputil._parse_request_range(range_header)
         if request_range:
             start, end = request_range
-            size = stream.get_size()
+            size = video.get_size()
             if (start is not None and start >= size) or end == 0:
                 # As per RFC 2616 14.35.1, a range is not satisfiable only: if
                 # the first requested byte is equal to or greater than the
@@ -166,7 +167,7 @@ class VideoHandler(BaseHandler):
         else:
             start = end = None
         # Serve the content
-        content = stream.get_content(start, end)
+        content = video.get_content(start, end)
         for chunk in content:
             self.write(chunk)
             yield tornado.gen.Task(self.flush)
@@ -212,7 +213,7 @@ class HTTPServer(object):
             (r'/categories/(.+)', CategoriesHandler, dict(core=self._core)),
             (r'/title', TitleHandler, dict(core=self._core)),
             (r'/play', PlayEpisodeHandler, dict(core=self._core)),
-            (r'/stream/(\d+)', VideoHandler, dict(core=self._core)),
+            (r'/stream', VideoHandler, dict(core=self._core)),
             (r'(.*?\.vtt)', SubtitlesHandler)
             ]
         self._app = tornado.web.Application(handlers, **settings)
