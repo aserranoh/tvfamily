@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+</head>
+<body>
+    <ul class="navbar">
+        <li><img src="/tvfamily.svg" height="47"></li>
+        <li style="float: right;"><a href="/title?category={{category}}&id={{title.filename}}">Back</a><li>
+    </ul>
+    <div class="content">
+        <h1 class="centered-title">{{title.title}}</h1>
+        <video class="video-player" id="player" controls autoplay>
+            {% set v = title.get_video() %}
+            <source src="/stream?category={{category}}&id={{title.filename}}" type="{{v.get_mime_type()}}">
+            Your browser does not support HTML5 video.
+            {% for s in v.get_subtitles() %}
+                <track label="{{s.label}}" kind="subtitles" src="{{s.path}}">
+            {% end %}
+        </video>
+    </div>
+</body>
+
+<script>
+    $(document).ready(function() {
+        $('video').on('ended', function(event) {
+            window.location.href = "/title?category={{category}}&id={{title.filename}}";
+        });
+    });
+</script>
+
+</html>

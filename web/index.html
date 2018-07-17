@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <ul class="navbar">
+        <li><img src="/tvfamily.svg" height="47"></li>
+        {% for c in categories %}
+            <li><a class="{{'navbar-active' if c.key == current else ''}}" href="/categories/{{c.key}}">{{c.name}}</a></li>
+        {% end %}
+    </ul>
+    <div class="content">
+        <ul class="titles-list">
+            {% if titles %}
+                {% for t, poster_url in zip(titles, posters) %}
+                    <li>
+                        <a href="/title?category={{current}}&id={{t.filename}}">
+                            <img class="poster" src="{{poster_url}}">
+                            <span>{{t.title}}</span>
+                        </a>
+                    </li>
+                {% end %}
+            {% else %}
+                <p>No titles in this category.</p>
+            {% end %}
+        </ul>
+    </div>
+</body>
+</html>
+

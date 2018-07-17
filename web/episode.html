@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <ul class="navbar">
+        <li><img src="/tvfamily.svg" height="47"></li>
+        <li style="float: right;"><a href="/categories/{{category}}">Back</a><li>
+    </ul>
+    <div class="content">
+        <h1 class="centered-title">{{title.title}}</h1>
+        <div class="title-general">
+            <img class="poster" width="182" height="268" src="{{poster}}"/>
+            <div class="title-description">
+                <div class="title-attributes">
+                    <span>{{air_year}} - {{end_year}}</span>
+                    <span class="sep">|</span>
+                    <span>{{genre}}</span>
+                    <span class="sep">|</span>
+                    <svg width="24" height="24">
+                        <polygon points="11.96,1.46 9.21,10 0.25,9.97 7.51,15.22 4.72,23.74 11.96,18.46 19.21,23.74 16.41,15.22 23.67,9.97 14.72,10" style="fill:#f3ce13;stroke:black;stroke-width:0;fill-rule:all;" />
+                    </svg>
+                    <span class="rating">{{rating}}</span>
+                </div>
+                <p>{{plot}}</p>
+                <ul class="inline-list">
+                    {% for s in title.get_seasons() %}
+                        <li><a class="{{'list-active' if s == episode.season else ''}}" href="/title?category={{category}}&id={{title.filename}}&season={{s}}">Season {{s}}</a></li>
+                    {% end %}
+                </ul>
+                <ul class="inline-list">
+                    {% for e in title.get_episodes(episode.season) %}
+                        <li><a class="{{'list-active' if e == episode.episode else ''}}" href="/title?category={{category}}&id={{title.filename}}&season={{episode.season}}&episode={{e}}">Episode {{e}}</a></li>
+                    {% end %}
+                </ul>
+            </div>
+        </div>
+        <hr>
+        <div class="episode-description">
+            <img class="still" src="{{still}}" width="200" height="112"/>
+            <div class="episode-plot">
+                <div>
+                    <span class="episode-title">{{episode_title}}</span>
+                    <span class="episode-attrs">
+                        <span>{{episode_air_date}}</span>
+                        <span class="sep">|</span>
+                        {% set duration = episode.get_video().get_duration() %}
+                        {% if duration.seconds >= 3600 %}
+                            <span>{{'{}h {}min'.format(duration.seconds//3600, (duration.seconds//60)%60)}}</span>
+                        {% else %}
+                            <span>{{'{}min'.format(duration.seconds//60)}}</span>
+                        {% end %}
+                        <span class="sep">|</span>
+                        <svg width="24" height="24">
+                            <polygon points="11.96,1.46 9.21,10 0.25,9.97 7.51,15.22 4.72,23.74 11.96,18.46 19.21,23.74 16.41,15.22 23.67,9.97 14.72,10" style="fill:#f3ce13;stroke:black;stroke-width:0;fill-rule:all;" />
+                        </svg>
+                        <span>{{episode_rating}}</span>
+                    </span>
+                </div>
+                <p>{{episode_plot}}</p>
+                <span>Subtitles: {{', '.join([s.label for s in episode.get_video().get_subtitles()]) if episode.get_video().get_subtitles() else 'None'}}</span>
+            </div>
+            <div>
+                <a class="play-button" href="/play?category={{category}}&id={{title.filename}}&season={{episode.season}}&episode={{episode.episode}}">Play</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+

@@ -1,0 +1,148 @@
+#!/usr/bin/env python
+
+'''tvfamily-convert - Converts videos and subtitles to a tvfamily accepted
+format.
+
+Copyright 2018 Antonio Serrano Hernandez
+
+This file is part of tvfamily.
+
+tvfamily is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+tvfamily is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with tvfamily; see the file COPYING.  If not, see
+<http://www.gnu.org/licenses/>.
+'''
+
+import json
+import os
+import subprocess
+import sys
+
+__script__ = 'tvfamily-convert'
+__author__ = 'Antonio Serrano Hernandez'
+__copyright__ = 'Copyright (C) 2018 Antonio Serrano Hernandez'
+__version__ = '0.1'
+__license__ = 'GPL'
+__maintainer__ = 'Antonio Serrano Hernandez'
+__email__ = 'toni.serranoh@gmail.com'
+__status__ = 'Development'
+__homepage__ = 'https://github.com/aserranoh/tvfamily'
+
+VIDEO_EXTENSIONS = ['mp4', 'mkv', 'avi', 'webm']
+SUBTITLES_EXTENSIONS = ['srt', 'vtt']
+FFPROBE = ['ffprobe', '-v', 'error', '-show_entries',
+    'stream=codec_type,codec_name:stream_tags=language,title', '-of', 'json']
+ACCEPTED_CONTAINERS = ['mp4', 'webm']
+
+def split_filename(filename):
+    '''Split the filename, before the extension and the extension.'''
+    l = filename.rpartition('.')
+    return l[0], l[2]
+
+def get_video_info(filename):
+    '''Return information about the video in filename.'''
+    p = subprocess.run(FFPROBE + [filename], stdout=subprocess.PIPE)
+    return json.loads(p.stdout.decode('utf-8'))
+
+def process_video(path, filename):
+    '''Converts a video file to mp4, if necessary.'''
+    base, container = split_filename(filename)
+    # If container is mp4 we don't do anything
+    if container not in ACCEPTED_CONTAINERS:
+        # Get video info
+        abspath = os.path.join(path, filename)
+        info = get_video_info(abspath)
+        # Obtain the video and audio codecs, and the subtitles
+        subtitles = []
+        for stream in info['streams']:
+            if stream['codec_type'] == 'video':
+                video_codec = stream['codec_name']
+            elif stream['codec_type'] == 'audio':
+                audio_codec = stream['codec_name']
+            elif stream['codec_type'] == 'subtitle':
+                subtitles.append(stream)
+        # Audio reencoding
+        if audio_codec == 'aac':
+            audio_cmd = ['-acodec', 'copy']
+        else:
+            audio_cmd = ['-c:a', 'aac']
+        # Video reencoding
+        if video_codec == 'h264':
+            video_cmd = ['-vcodec', 'copy']
+        else:
+            video_cmd = ['-c:v', 'libx264']
+        # Extract the subtitles
+        for i, s in enumerate(subtitles):
+            try:
+                label = s['tags']['title']
+            except KeyError:
+                try:
+                    label = s['tags']['language']
+                except KeyError:
+                    label = 'sub'
+            sub_filename = os.path.join(
+                path, '{}_{}.vtt'.format(base, label))
+            cmd = ['ffmpeg', '-y', '-v', 'quiet', '-i', abspath, '-map',
+                '0:s:{}'.format(i), sub_filename]
+            p = subprocess.run(cmd)
+            if p.returncode == 0:
+                print('{} -> extracted'.format(sub_filename))
+            else:
+                print('error: {}: extracting subtitle'.format(
+                    sub_filename), file=sys.stderr)
+                return
+        # Convert video file
+        video_filename = os.path.join(path, '{}.mp4'.format(base))
+        cmd = ['ffmpeg', '-y', '-v', 'quiet', '-i', abspath, '-map', '0:v', '-map', '0:a:1',
+            ] + video_cmd + audio_cmd + [video_filename]
+        p = subprocess.run(cmd)
+        if p.returncode == 0:
+            print('{} -> converted'.format(video_filename))
+            os.unlink(abspath)
+        else:
+            print('error: {}: converting'.format(abspath), file=sys.stderr)
+
+def process_subtitle(path, filename):
+    '''Convert subtitles files.'''
+    abspath = os.path.join(path, filename)
+    base, extension = split_filename(filename)
+    if extension != 'vtt':
+        sub_filename = os.path.join(path, '{}.vtt'.format(base))
+        cmd = ['ffmpeg', '-y', '-v', 'quiet', '-i', abspath, sub_filename]
+        p = subprocess.run(cmd)
+        if p.returncode == 0:
+            print('{} -> converted'.format(sub_filename))
+            os.unlink(abspath)
+        else:
+            print('error: {}: converting'.format(abspath), file=sys.stderr)
+
+def main(videos_root):
+    '''Converts videos to mp4 and subtitles to vtt format.
+
+    Parameters:
+      * The root of the arborescence where the videos are.
+    '''
+    # Walk through the root tree searching for videos and subtitles
+    for root, dirs, files in os.walk(videos_root):
+        for f in files:
+            base, extension = split_filename(f)
+            if extension in VIDEO_EXTENSIONS:
+                process_video(root, f)
+            elif extension in SUBTITLES_EXTENSIONS:
+                process_subtitle(root, f)
+            else:
+                print('unrecognized file {}'.format(os.path.join(root, f)),
+                    file=sys.stderr)
+
+if __name__ == '__main__':
+    main(sys.argv[1])
+
