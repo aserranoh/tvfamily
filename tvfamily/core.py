@@ -31,7 +31,6 @@ import subprocess
 import sys
 import time
 import tornado.gen
-import xml.etree.ElementTree as ET
 
 import tvfamily.imdb
 import tvfamily.PTN
@@ -52,18 +51,14 @@ TVFAMILY_GID = grp.getgrnam('tvfamily').gr_gid
 ATTRS_CACHE_SECONDS = 24 * 3600  # One day
 
 
+class CoreError(Exception): pass
+
+
 class Core(object):
-    '''Interface with the application core.
+    '''Interface with the application core.'''
 
-    Constructor parameters:
-      * options_file: the options file.
-      * daemon: True if in daemon mode, False if in user mode.
-    '''
-
-    def __init__(self, options_file, daemon):
-        # Load the application's options from the file
-        self._options = Options(options_file)
-
+    def __init__(self, options, daemon):
+        self._options = options
         # Build the application's logger
         self._logger = Logger()
 
@@ -72,15 +67,16 @@ class Core(object):
         try:
             self._titles_db = TitlesDB(
                 categories=self._define_categories(),
-                path=self._options.get_root_option().videos.path)
+                path=self._options.get_options()['videos']['path'])
         except AttributeError:
             # No videos.path defined
             self.error('no videos.path defined')
             raise
 
         # Switch to user tvfamily for security reasons
-        os.setgid(TVFAMILY_GID)
-        os.setuid(TVFAMILY_UID)
+        if daemon:
+            os.setgid(TVFAMILY_GID)
+            os.setuid(TVFAMILY_UID)
 
     def _define_categories(self):
         '''Define the list of caterogies.'''
@@ -90,7 +86,7 @@ class Core(object):
             Category('Cartoon', TVSerie, ['tv_series', 'tv_miniseries']),
         ]
         # Create the directories for the categories if they don't exist
-        path = self._options.get_root_option().videos.path
+        path = self._options.get_options()['videos']['path']
         for c in categories:
             category_path = os.path.join(path, c.key)
             if not os.path.exists(category_path):
@@ -102,7 +98,7 @@ class Core(object):
 
     def get_options(self):
         '''Return the application's options.'''
-        return self._options.get_root_option()
+        return self._options.get_options()
 
     # Logging functions
 
@@ -127,78 +123,6 @@ class Core(object):
     def get_title(self, category, name):
         '''Return the title within category called name.'''
         return self._titles_db.get_title(category, name)
-
-
-class Option(object):
-    '''Stores a tree of options.
-
-    The suboptions are accessible trough the attributes of this instance.
-    '''
-
-    def __init__(self):
-        self._has_subopts = False
-
-    def add_suboption(self, name, value):
-        '''Add a suboption called name and with value.
-
-        Value may be a string or an Option object (so that the options are
-        nested). The suboption will be accessible through the attributes of
-        the parent option.
-        '''
-        setattr(self, name, value)
-        self._has_subopts = True
-
-    def has_suboptions(self):
-        '''Return True if this option has any suboptions.'''
-        return self._has_subopts
-
-
-class Options(object):
-    '''Manages configuration options.
-
-    Constructor parameters:
-      * options_file: the XML file that contains the options.
-    '''
-
-    _DEFAULT_OPTIONS = '''<?xml version="1.0"?>
-<tvfamily-options>
-  <server port="8888"/>
-</tvfamily-options>
-'''
-
-    def __init__(self, options_file):
-        try:
-            # Try to read the options from the options file
-            tree = ET.parse(options_file).getroot()
-        except:
-            # If the options file cannot be read, use the default options
-            tree = ET.fromstring(self._DEFAULT_OPTIONS)
-        self._root = Option()
-        for child in tree:
-            self._build_option(self._root, child)
-
-    def _build_option(self, parent, xml):
-        '''Recursively build the tree of options from an xml tree.
-        Insert the new option as a child of the parent option.
-        '''
-        o = Option()
-        # Add the attributes of the xml node to the option
-        for attrib, value in xml.attrib.items():
-            o.add_suboption(attrib, value)
-        # Add the children of the xml node to the option
-        for child in xml:
-            self._build_option(o, child)
-        # If the option has any attributes, add it to the parent
-        if o.has_suboptions():
-            parent.add_suboption(xml.tag, o)
-        # If the option has not any suboption, add the text of the xml node
-        # as the option
-        else:
-            parent.add_suboption(xml.tag, xml.text)
-
-    def get_root_option(self):
-        '''Return the root option that contains the hierarchy of optopns.'''
-        return self._root
 
 
 # TODO: implement logger functions

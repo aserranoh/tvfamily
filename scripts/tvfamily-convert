@@ -102,7 +102,7 @@ def process_video(path, filename):
                 return
         # Convert video file
         video_filename = os.path.join(path, '{}.mp4'.format(base))
-        cmd = ['ffmpeg', '-y', '-v', 'quiet', '-i', abspath, '-map', '0:v', '-map', '0:a:1',
+        cmd = ['ffmpeg', '-y', '-v', 'quiet', '-i', abspath,
             ] + video_cmd + audio_cmd + [video_filename]
         p = subprocess.run(cmd)
         if p.returncode == 0:

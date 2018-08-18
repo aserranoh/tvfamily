@@ -21,9 +21,9 @@ along with tvfamily; see the file COPYING.  If not, see
 <http://www.gnu.org/licenses/>.
 '''
 
-import argparse
+import sys
 
-import tvfamily.httpserver
+import tvfamily.webserver
 
 __script__ = 'tvfamily'
 __author__ = 'Antonio Serrano Hernandez'
@@ -35,36 +35,13 @@ __email__ = 'toni.serranoh@gmail.com'
 __status__ = 'Development'
 __homepage__ = 'https://github.com/aserranoh/tvfamily'
 
-VERSION_STRING = '''\
-%(prog)s {version}
-{copyright}
-License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>
-This is free software: you are free to change and redistribute it.
-There is NO WARRANTY, to the extent permitted by law.\
-'''.format(version=__version__, copyright=__copyright__)
-
-HELP_EPILOG = '''\
-Report bugs to: {email}
-{prog} home page: {homepage}
-'''.format(email=__email__, prog=__script__, homepage=__homepage__)
-
-DEFAULT_CONFIG_FILE = '/etc/tvfamily.conf'
 
 def main():
-    # Parse command line options
-    parser = argparse.ArgumentParser(prog=__script__, epilog=HELP_EPILOG,
-        formatter_class=argparse.RawTextHelpFormatter,
-        description='Multimedia Server using HTML5.')
-    parser.add_argument('--version', action='version', version=VERSION_STRING)
-    parser.add_argument('-c', '--config', default=DEFAULT_CONFIG_FILE,
-        help='configuration file')
-    parser.add_argument('-d', '--daemonize', action='store_true',
-        help='daemonize this server')
-    args = parser.parse_args()
-
-    # Start webserver
-    server = tvfamily.httpserver.HTTPServer(args.config, args.daemonize)
-    server.run()
+    try:
+        server = tvfamily.webserver.WebServer()
+        server.run()
+    except tvfamily.webserver.ServerError:
+        sys.exit(1)
 
 if __name__ == '__main__':
     main()

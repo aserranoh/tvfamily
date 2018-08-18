@@ -146,6 +146,7 @@ p {
     text-decoration: none;
     color: white;
     text-shadow: 0 0 3px black;
+    width: 110px;
 }
 
 .inline-list a:hover {
