@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <ul class="navbar">
+        <li><img class="navbar-icon" src="/tvfamily.svg" height="47"></li>
+        <li style="float: right;"><a href="/"><span>Back</span></a><li>
+    </ul>
+    <div class="content">
+        <form action="/save-settings" method="post">
+            <h3>IMDB</h3>
+            <div>
+                <span>Cache expiracy</span>
+                <select name="imdb_cache_expiracy">
+                    {% set s = settings['imdb_cache_expiracy'] %}
+                    <option value="0" {{'selected' if s == 0 else ''}}>No cache</option>
+                    <option value="1" {{'selected' if s == 1 else ''}}>1 day</option>
+                    <option value="7" {{'selected' if s == 7 else ''}}>7 days</option>
+                    <option value="30" {{'selected' if s == 30 else ''}}>30 days</option>
+                    <option value="-1" {{'selected' if s < 0 else ''}}>Never</option>
+                </select>
+            </div>
+            <input type="submit" value="Save">
+        </form>
+    </div>
+</body>

@@ -48,7 +48,12 @@ __homepage__ = 'https://github.com/aserranoh/tvfamily'
 RE_KEY = re.compile(r'[^a-zA-Z]+')
 TVFAMILY_UID = pwd.getpwnam('tvfamily').pw_uid
 TVFAMILY_GID = grp.getgrnam('tvfamily').gr_gid
-ATTRS_CACHE_SECONDS = 24 * 3600  # One day
+USER_SETTINGS_FILE = os.path.join(os.path.expanduser('~'), '.tvfamily')
+SYSTEM_SETTINGS_FILE = '/var/lib/tvfamily/settings.json'
+SETTINGS_DEFAULTS = {
+    'imdb_cache_expiracy': 1,
+}
+SECONDS_IN_DAY = 3600 * 24
 
 
 class CoreError(Exception): pass
@@ -61,6 +66,16 @@ class Core(object):
         self._options = options
         # Build the application's logger
         self._logger = Logger()
+
+        # Load the runtime settings
+        if daemon:
+            settings_file = SYSTEM_SETTINGS_FILE
+            directory = os.path.dirname(settings_file)
+            os.mkdirs(directory, exist_ok=True)
+            os.chown(directory, 0, TVFAMILY_GID)
+        else:
+            settings_file = USER_SETTINGS_FILE
+        self._settings = Settings(settings_file, SETTINGS_DEFAULTS)
 
         # Build the titles db
         # First, define the lists of categories
@@ -81,9 +96,11 @@ class Core(object):
     def _define_categories(self):
         '''Define the list of caterogies.'''
         categories = [
-            Category('TV Series', TVSerie, ['tv_series', 'tv_miniseries']),
-            Category('Movies', Movie, ['feature']),
-            Category('Cartoon', TVSerie, ['tv_series', 'tv_miniseries']),
+            Category('TV Series', TVSerie, ['tv_series', 'tv_miniseries'],
+                self._settings),
+            Category('Movies', Movie, ['feature'], self._settings),
+            Category('Cartoon', TVSerie, ['tv_series', 'tv_miniseries'],
+                self._settings),
         ]
         # Create the directories for the categories if they don't exist
         path = self._options.get_options()['videos']['path']
@@ -109,6 +126,16 @@ class Core(object):
     def info(self, msg):
         '''Log an info message msg.'''
         self._logger.info(msg)
+
+    # Runtime settings functions
+
+    def get_settings(self):
+        '''Return the runtime settings.'''
+        return self._settings
+
+    def set_settings(self, settings):
+        '''Set new values for the settings.'''
+        self._settings.update(settings)
 
     # Functions to navigate through the titles
 
@@ -138,6 +165,35 @@ class Logger(object):
         print('info: {}'.format(msg), file=sys.stderr)
 
 
+class Settings(object):
+    '''Store the runtime settings.'''
+
+    def __init__(self, settings_file, defaults):
+        self._settings_file = settings_file
+        # If the settings file doesn't exist, create it with the default values
+        try:
+            with open(settings_file, 'r') as f:
+                self._settings = json.loads(f.read())
+        except IOError:
+            self._settings = defaults.copy()
+            self._save()
+
+    def __getitem__(self, setting):
+        '''Get a setting.'''
+        return self._settings[setting]
+
+    def update(self, settings):
+        '''Update the settings.'''
+        self._settings.update(settings)
+        # Update the settings file
+        self._save()
+
+    def _save(self):
+        '''Save the settings into the settings file.'''
+        with open(self._settings_file, 'w') as f:
+            f.write(json.dumps(self._settings))
+
+
 class Category(object):
     '''Represents a video category.
 
@@ -147,17 +203,19 @@ class Category(object):
           category.
     '''
 
-    def __init__(self, name, title_class, imdb_type):
+    def __init__(self, name, title_class, imdb_type, settings):
         self.name = name
         self.key = RE_KEY.sub('_', name.lower())
         self.title_class = title_class
         self.imdb_type = imdb_type
+        self.settings = settings
 
     def get_title(self, path):
         '''Return an instance for the title whose element is at path.
         '''
         try:
-            return self.title_class(path, self.imdb_type)
+            return self.title_class(path, self.imdb_type,
+                self.settings['imdb_cache_expiracy'])
         except TypeError:
             # The given file doesn't correspond to this category
             return None
@@ -266,9 +324,10 @@ class Title(object):
       * imdb_type: type of this title in the IMDB database.
     '''
 
-    def __init__(self, path, imdb_type):
+    def __init__(self, path, imdb_type, cache_expiracy):
         self.path = path
         self.imdb_type = imdb_type
+        self._cache_expiracy = cache_expiracy
         # Load the title attrs if present
         try:
             with open(self.attrs_filename, 'r') as f:
@@ -291,41 +350,60 @@ class Title(object):
         return self._attrs['poster_url']
 
     @tornado.gen.coroutine
-    def fetch(self):
-        '''Fetch the attributes from IMDB.'''
+    def get_imdb_title(self):
+        '''Return an IMDBTitle instance for this title.'''
         if 'imdb_id' not in self._attrs:
-            # We don't have even the IMDB index, then first we have to
+            # We don't have the IMDB index, then first we have to
             # search the item
-            try:
-                title = (yield tvfamily.imdb.search(
-                    self.title, self.imdb_type, self.year))[0]
-            except IndexError:
-                print(self.title)
-                raise
+            title = (yield tvfamily.imdb.search(
+                self.title, self.imdb_type, self.year))[0]
         else:
             title = tvfamily.imdb.IMDBTitle(self._attrs)
+        return title
+
+    def save_attrs(self):
+        '''Save the title attributes in the cache file.'''
+        with open(self.attrs_filename, 'w') as f:
+            f.write(json.dumps(self._attrs))
+
+    @tornado.gen.coroutine
+    def fetch(self):
+        '''Fetch the attributes from IMDB.'''
+        title = yield self.get_imdb_title()
         # Fetch all the attributes
         yield title.fetch()
         self._attrs.update(title.attrs)
         # Update the timestamp of the general attrs
         self._attrs['timestamp'] = time.time()
         # Save the attributes in the file
-        with open(self.attrs_filename, 'w') as f:
-            f.write(json.dumps(self._attrs))
+        self.save_attrs()
+
+    def check_cache(self, element):
+        '''Check if the database cache has expired.
+        Raises KeyError if the timestamp cannot be found in the database or
+        ValueError if the cache has expired.
+        '''
+        # If self._cache_expiracy is < 0, the cache never expires
+        if self._cache_expiracy == 0:
+            # Always fetch
+            raise ValueError()
+        elif self._cache_expiracy > 0:
+            exp_time_in_seconds = self._cache_expiracy * SECONDS_IN_DAY
+            if time.time() - element['timestamp'] > exp_time_in_seconds:
+                raise ValueError()
 
     @tornado.gen.coroutine
     def get_attr(self, attr):
         '''Return the attribute attr.'''
         try:
-            # Check the timestamp of the general attrs
-            if time.time() - self._attrs['timestamp'] > ATTRS_CACHE_SECONDS:
-                raise ValueError()
-            return self._attrs[attr]
+            self.check_cache(self._attrs)
+            a = self._attrs[attr]
         except (KeyError, ValueError):
             # The attribute is not present yet or it has expired
             # Fetch it from IMDB
             yield self.fetch()
-            return self._attrs[attr]
+            a = self._attrs[attr]
+        return a
 
     @property
     def title(self):
@@ -339,15 +417,10 @@ class Title(object):
 
 
 class TVSerie(Title):
-    '''Represents a TV Serie.
+    '''Represents a TV Serie.'''
 
-    Constructor parameters:
-      * path: the path to the TV Show (a list of components).
-      * imdb_type: the type of title to perform searchs in IMDB.
-    '''
-
-    def __init__(self, path, imdb_type):
-        super(TVSerie, self).__init__(path, imdb_type)
+    def __init__(self, path, imdb_type, cache_expiracy):
+        super(TVSerie, self).__init__(path, imdb_type, cache_expiracy)
         # TV Series must be directories (that contain the episodes)
         if not os.path.isdir(path):
             raise TypeError("path doesn't correspond to a tv serie")
@@ -390,6 +463,23 @@ class TVSerie(Title):
         return sorted(self._episodes[season].keys())
 
     @tornado.gen.coroutine
+    def fetch_season(self, season):
+        '''Fetch the attributes of a season from IMDB.'''
+        title = yield self.get_imdb_title()
+        # Fetch the season attributes
+        yield title.fetch_season(season)
+        try:
+            seasons = self._attrs['seasons']
+            seasons.update(title.attrs['seasons'])
+        except KeyError:
+            seasons = self._attrs['seasons'] = title.attrs['seasons']
+        s = seasons[str(season)]
+        # Update the timestamp for this season
+        s['timestamp'] = time.time()
+        # Save the attributes in the file
+        self.save_attrs()
+
+    @tornado.gen.coroutine
     def get_episode_attr(self, season, episode, attr):
         '''Return an attribute of the given episode of the given season of this
         tv_series.
@@ -399,30 +489,11 @@ class TVSerie(Title):
             # are strings
             s = self._attrs['seasons'][str(season)]
             # Check the timestamp for this season
-            if time.time() - s['timestamp'] > ATTRS_CACHE_SECONDS:
-                raise ValueError()
+            self.check_cache(s)
         except (KeyError, ValueError):
-            # This season episodes is not cached
-            if 'imdb_id' not in self._attrs:
-                # We don't have even the IMDB index, then first we have to
-                # search the item
-                results = yield tvfamily.imdb.search(
-                    self.title, self.imdb_type)
-                title = results[0]
-            else:
-                title = tvfamily.imdb.IMDBTitle(self._attrs)
-            # Fetch all the attributes
-            yield title.fetch_season(season)
-            if 'seasons' not in self._attrs:
-                self._attrs['seasons'] = title.attrs['seasons']
-            else:
-                self._attrs['seasons'].update(title.attrs['seasons'])
+            # This season episodes is not cached or the cache has expired
+            yield self.fetch_season(season)
             s = self._attrs['seasons'][str(season)]
-            # Update the timestamp for this season
-            s['timestamp'] = time.time()
-            # Save the attributes in the file
-            with open(self.attrs_filename, 'w') as f:
-                f.write(json.dumps(self._attrs))
         return s[str(episode)][attr]
 
     def get_seasons(self):
@@ -472,15 +543,10 @@ class Episode(object):
 
 
 class Movie(Title):
-    '''Represents a movie.
+    '''Represents a movie.'''
 
-    Constructor parameters:
-      * path: path to the movie.
-      * imdb_type: the type of title to perform searchs in IMDB.
-    '''
-
-    def __init__(self, path, imdb_type):
-        super(Movie, self).__init__(path, imdb_type)
+    def __init__(self, path, imdb_type, cache_expiracy):
+        super(Movie, self).__init__(path, imdb_type, cache_expiracy)
         filename = os.path.basename(path)
         # Check that the movie is of an accepted type
         if not Video.is_video(path):

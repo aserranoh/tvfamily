@@ -21,6 +21,7 @@ along with tvfamily; see the file COPYING.  If not, see
 '''
 
 from html.parser import HTMLParser
+import json
 import re
 from tornado import gen
 from tornado.httpclient import AsyncHTTPClient
@@ -40,7 +41,8 @@ _IMDB_SEARCH_TITLE = 'https://www.imdb.com/search/title'
 _IMDB_TITLE = 'https://www.imdb.com/title/{}'
 _IMDB_SEASON = (
     'https://www.imdb.com/title/{}/episodes?season={}&ref_=tt_ov_epl')
-_RE_YEARS = re.compile(r'\((?P<air_year>\d{4})(–(?P<end_year>\d{4}|\s*))?\)')
+_RE_YEARS = re.compile(
+    r'\(.*?(?P<air_year>\d{4})(–(?P<end_year>\d{4}|\s*))?\)$')
 
 
 def _get_years(data):
@@ -132,74 +134,40 @@ class TitleParser(HTMLParser):
     def __init__(self):
         super(TitleParser, self).__init__()
         self.attrs = {}
-        self._in_poster = False
-        self._in_plot = False
-        self._in_genre = False
-        self._in_subtext = False
-        self._in_rating = False
+        self._in_bd = False
+        self._in_poster = True
 
     def handle_starttag(self, tag, attrs):
-        if tag == 'div':
+        if tag == 'script':
+            for a in attrs:
+                if a == ('type', 'application/ld+json'):
+                    self._in_bd = True
+        elif tag == 'meta':
+            in_title = False
+            if attrs[0] == ('property', 'og:title'):
+                self.attrs['air_year'], self.attrs['end_year'] = _get_years(
+                    attrs[1][1])
+        elif tag == 'div':
             for a in attrs:
                 if a == ('class', 'poster'):
-                    # Inside poster div
                     self._in_poster = True
-                    break
-                elif a == ('class', 'summary_text'):
-                    # Inside plot div
-                    self._in_plot = True
-                    break
-                elif a == ('class', 'subtext'):
-                    # Inside subtext div
-                    self._in_subtext = True
-        elif self._in_poster and tag == 'img':
+        elif tag == 'img' and self._in_poster:
             for a in attrs:
                 if a[0] == 'src':
                     self.attrs['poster_url'] = a[1]
-                    break
-        elif tag == 'span':
-            for a in attrs:
-                if a == ('itemprop', 'genre'):
-                    # Inside genre span
-                    self._in_genre = True
-                    break
-                elif a == ('itemprop', 'ratingValue'):
-                    # Inside rating span
-                    self._in_rating = True
-                    break
 
     def handle_data(self, data):
-        if self._in_plot:
-            try:
-                p = self.attrs['plot']
-            except KeyError:
-                p = self.attrs['plot'] = []
-            p.append(data.strip())
-        elif self._in_genre:
-            try:
-                genre = self.attrs['genre']
-            except KeyError:
-                genre = self.attrs['genre'] = []
-            genre.append(data)
-        elif self._in_subtext:
-            try:
-                self.attrs['air_year'], self.attrs['end_year'] = _get_years(
-                    data)
-            except ValueError:
-                pass
-        elif self._in_rating:
-            self.attrs['rating'] = float(data)
+        if self._in_bd:
+            bd = json.loads(data)
+            self.attrs['plot'] = bd['description']
+            self.attrs['genre'] = bd['genre']
+            self.attrs['rating'] = bd['aggregateRating']['ratingValue']
 
     def handle_endtag(self, tag):
-        if tag == 'div':
+        if tag == 'script':
+            self._in_bd = False
+        elif tag == 'div':
             self._in_poster = False
-            if self._in_plot:
-                self.attrs['plot'] = ' '.join(self.attrs['plot'])
-                self._in_plot = False
-            self._in_subtext = False
-        elif tag == 'span':
-            self._in_genre = False
-            self._in_rating = False
 
 
 class SeasonParser(HTMLParser):

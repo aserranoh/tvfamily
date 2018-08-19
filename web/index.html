@@ -5,10 +5,11 @@
 </head>
 <body>
     <ul class="navbar">
-        <li><img src="/tvfamily.svg" height="47"></li>
+        <li><img class="navbar-icon" src="/tvfamily.svg" height="47"></li>
         {% for c in categories %}
-            <li><a class="{{'navbar-active' if c.key == current else ''}}" href="/categories/{{c.key}}">{{c.name}}</a></li>
+            <li><a class="{{'navbar-active' if c.key == current else ''}}" href="/categories/{{c.key}}"><span>{{c.name}}</span></a></li>
         {% end %}
+        <li style="float: right;"><a href="/settings"><span>Settings</span></a></li>
     </ul>
     <div class="content">
         <ul class="titles-list">

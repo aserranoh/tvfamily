@@ -19,26 +19,33 @@ body {
     float: left;
 }
 
-.navbar img {
-    padding: 4px 30px 4px 5px;
+.navbar img.navbar-icon {
     display: block;
+    padding: 4px 30px 4px 5px;
 }
 
 .navbar a {
+    display: block;
+    text-decoration: none;
+}
+
+.navbar span {
     display: block;
     color: black;
     text-align: center;
     padding: 16px 20px;
     font-size: 20px;
-    text-decoration: none;
 }
 
 .navbar a:hover {
     background-color: grey;
+}
+
+.navbar a:hover > span {
     color: white;
 }
 
-a.navbar-active {
+a.navbar-active > span {
     background-color: black;
     color: white;
 }
@@ -84,7 +91,7 @@ a.navbar-active {
     box-shadow: 0 0 5px blue;
 }
 
-h1, h2, p, .title-description span, .episode-description span {
+h1, h2, h3, p, .title-description span, .episode-description span {
     color: white;
     text-shadow: 0 0 5px black;
 }

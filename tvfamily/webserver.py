@@ -259,6 +259,26 @@ class SubtitlesHandler(BaseHandler):
             self.write(f.read())
 
 
+class SettingsHandler(BaseHandler):
+    '''Show the settings page.'''
+
+    def get(self):
+        '''Show the settings page.'''
+        self.render('settings.html', settings=self._core.get_settings())
+
+
+class SaveSettingsHandler(BaseHandler):
+    '''Save the settings.'''
+
+    def post(self):
+        cache_expiracy = int(self.get_body_argument('imdb_cache_expiracy'))
+        settings = {
+            'imdb_cache_expiracy': cache_expiracy,
+        }
+        self._core.set_settings(settings)
+        self.redirect('/')
+
+
 class WebServer(tvfamily.httpserver.HTTPServer):
     '''The HTTP server that serves the pages to the user.'''
 
@@ -268,18 +288,20 @@ class WebServer(tvfamily.httpserver.HTTPServer):
                 description='Multimedia Server using HTML5.',
                 version=VERSION_STRING, epilog=HELP_EPILOG, settings=SETTINGS)
             self._core = tvfamily.core.Core(self.options, self.daemonize)
+            d = {'core': self._core}
             handlers = [
-                (r'/', RootHandler, dict(core=self._core)),
-                (r'/categories/(.+)', CategoriesHandler,
-                    dict(core=self._core)),
-                (r'/title', TitleHandler, dict(core=self._core)),
-                (r'/play', PlayHandler, dict(core=self._core)),
-                (r'/stream', VideoHandler, dict(core=self._core)),
+                (r'/', RootHandler, d),
+                (r'/categories/(.+)', CategoriesHandler, d),
+                (r'/title', TitleHandler, d),
+                (r'/play', PlayHandler, d),
+                (r'/stream', VideoHandler, d),
                 (r'(.*?\.vtt)', SubtitlesHandler),
                 (r'/(styles.css)', tornado.web.StaticFileHandler,
                     dict(path='web')),
-                (r'/(tvfamily.svg)', tornado.web.StaticFileHandler,
+                (r'/(.*?\.svg)', tornado.web.StaticFileHandler,
                     dict(path='data')),
+                (r'/settings', SettingsHandler, d),
+                (r'/save-settings', SaveSettingsHandler, d),
                 ]
             self.add_handlers(handlers)
         except (tvfamily.httpserver.HTTPServerError,
