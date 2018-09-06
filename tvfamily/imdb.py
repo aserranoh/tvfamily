@@ -20,11 +20,11 @@ along with tvfamily; see the file COPYING.  If not, see
 <http://www.gnu.org/licenses/>.
 '''
 
-from html.parser import HTMLParser
+import html.parser
 import json
 import re
-from tornado import gen
-from tornado.httpclient import AsyncHTTPClient
+import tornado.gen
+import tornado.httpclient
 import urllib.parse
 
 __author__ = 'Antonio Serrano Hernandez'
@@ -37,17 +37,24 @@ __status__ = 'Development'
 __homepage__ = 'https://github.com/aserranoh/tvfamily'
 
 
-_IMDB_SEARCH_TITLE = 'https://www.imdb.com/search/title'
-_IMDB_TITLE = 'https://www.imdb.com/title/{}'
-_IMDB_SEASON = (
+_HTTP_HEADERS = {'Accept-Language': 'en-US'}
+_IMDB_SEARCH_URL = 'https://www.imdb.com/find'
+_IMDB_TITLE_URL = 'https://www.imdb.com/title/{}'
+_IMDB_SEASON_URL = (
     'https://www.imdb.com/title/{}/episodes?season={}&ref_=tt_ov_epl')
-_RE_YEARS = re.compile(
+_RE_SEARCH_YEAR = re.compile(r'\((\d{4})\)')
+_SEARCH_TYPES = ['TV Series', 'Short', 'TV Episode', 'Video', 'TV Movie',
+    'Video Game', 'TV Mini-Series']
+_RE_SEARCH_TYPE = re.compile(r'\(({})\)'.format('|'.join(_SEARCH_TYPES)))
+# Add 'Movie' as search type (in IMDB movies don't have explicit type)
+_SEARCH_TYPES.append('Movie')
+_RE_TITLE_YEARS = re.compile(
     r'\(.*?(?P<air_year>\d{4})(–(?P<end_year>\d{4}|\s*))?\)$')
-
 
 def _get_years(data):
     '''Return the air and end year of a tv series.'''
-    m = _RE_YEARS.search(data)
+    air_year = end_year = None
+    m = _RE_TITLE_YEARS.search(data)
     if m:
         air_year = int(m.group('air_year'))
         end_year = m.group('end_year')
@@ -56,131 +63,190 @@ def _get_years(data):
                 end_year = int(end_year)
             else:
                 end_year = 0
-        return air_year, end_year
-    else:
-        raise ValueError()
+    return air_year, end_year
 
 
-class SearchResultParser(HTMLParser):
-    '''Parse the IMDB search result page.'''
+class SearchParser(html.parser.HTMLParser):
+    '''Parse the IMDB search result page.
+
+    <table class="findList">
+    <tr class="findResult ...">
+    <td class="primary_photo">...</td>
+    <td class="result_text">
+      <a href="/title/IMDB_ID/...">TITLE</a>
+      (YEAR) (TYPE)
+    </td>
+    </tr>
+    </table>
+    '''
 
     def __init__(self):
-        super(SearchResultParser, self).__init__()
-        self._in_span_header = False
-        self._in_span_index = False
-        self._in_span_title = False
-        self._in_span_year = False
-        self._in_a = False
+        super(SearchParser, self).__init__()
+        # True if we are in the title column
+        self._in_title = False
+        # True if we are inside the <a> element that contains the IMDB ID
+        self._in_ref = False
+        # Holds the year and type of media
+        self._year = None
+        self._type = None
+        # The list of search results
         self.results = []
 
     def handle_starttag(self, tag, attrs):
-        if tag == 'span':
-            # Check if it is the span we are looking for
+        # Identify the column that contains the title information
+        if tag == 'td':
             for a in attrs:
-                if a == ('class', 'lister-item-header'):
-                    # inside title of search result
-                    self._in_span_header = True
-                    break
-                elif a[0] == 'class' and a[1].startswith('lister-item-index'):
-                    # Inside index
-                    self._in_span_index = True
-                    break
-                elif a[0] == 'title':
-                    # Inside title
-                    self._in_span_title = True
-                    break
-                elif a[0] == 'class' and a[1].startswith('lister-item-year'):
-                    # Inside year
-                    self._in_span_year = True
-                    break
-        elif self._in_span_title and tag == 'a':
-            self._in_a = True
-            # Get the id from the href attribute
-            self._id = attrs[0][1].split('/')[2]
+                if a == ('class', 'result_text'):
+                    self._in_title = True
+        # Identify the link that contains the imdb_id
+        elif tag == 'a' and self._in_title:
+            for a in attrs:
+                if a[0] == 'href':
+                    self._imdb_id = a[1].split('/')[2]
+            self._in_ref = True
 
     def handle_data(self, data):
-        if self._in_a:
+        if self._in_ref:
             self._title = data
-        elif self._in_span_year:
-            try:
-                self._air_year, self._end_year = _get_years(data)
-            except ValueError:
-                pass
+        elif self._in_title:
+            # Search for additional attributes: the year and the type
+            if self._year is None:
+                m = _RE_SEARCH_YEAR.search(data)
+                if m:
+                    self._year = int(m.group(1))
+            if self._type is None:
+                m = _RE_SEARCH_TYPE.search(data)
+                if m:
+                    self._type = m.group(1)
 
     def handle_endtag(self, tag):
-        if tag == 'span':
-            if self._in_span_index:
-                self._in_span_index = False
-            elif self._in_span_year:
-                self._in_span_year = False
-            elif self._in_span_title:
-                self._in_span_title = False
-            elif self._in_span_header:
-                self._in_span_header = False
-                # Add the found result
-                self.results.append({
-                    'title': self._title,
-                    'air_year': self._air_year,
-                    'end_year': self._end_year,
-                    'imdb_id': self._id
-                })
+        # If closing the title column, add the result to the list.
+        if tag == 'td' and self._in_title:
+            # If type was none, means it is a Movie
+            if self._type is None:
+                self._type = 'Movie'
+            self.results.append(IMDBTitle(self._imdb_id, {
+                'title': self._title,
+                'year': self._year,
+                'type': self._type,
+            }))
+            # Reset state variables.
+            self._in_title = False
+            self._year = self._type = None
         elif tag == 'a':
-            self._in_a = False
+            self._in_ref = False
 
 
-class TitleParser(HTMLParser):
-    '''Parse the IMDB title page.'''
+class TitleParser(html.parser.HTMLParser):
+    '''Parse the IMDB title page.
+
+    <meta property='og:title' content="TITLE (TYPE START_YEAR–END_YEAR )" />
+    <script type="application/ld+json">{
+      ...
+      "genre": [
+        "GENRE",
+        ...
+      ],
+      ...
+      "description": "DESCRIPTION",
+      ...
+      "aggregateRating": {
+        ...
+        "ratingValue": "RATING"
+      },
+      ...
+    }</script>
+    <div class="poster">
+      <a href="..."><img alt="..." title="..." src="POSTER_URL" /></a>
+    </div>
+    '''
 
     def __init__(self):
         super(TitleParser, self).__init__()
+        # Hold the title's attributes to return
         self.attrs = {}
-        self._in_bd = False
+        # True if we are inside the element that contains the DB in JSON format
+        self._in_db = False
+        # True if we are inside the <div> element that contains the poster
         self._in_poster = True
 
     def handle_starttag(self, tag, attrs):
         if tag == 'script':
+            # Check if it is the DB elements
             for a in attrs:
                 if a == ('type', 'application/ld+json'):
-                    self._in_bd = True
+                    self._in_db = True
         elif tag == 'meta':
+            # Check if we are in the title elements
             in_title = False
             if attrs[0] == ('property', 'og:title'):
+                # Get the air and end years contained in the title
                 self.attrs['air_year'], self.attrs['end_year'] = _get_years(
                     attrs[1][1])
         elif tag == 'div':
+            # Check if we are in the poster <div> element
             for a in attrs:
                 if a == ('class', 'poster'):
                     self._in_poster = True
         elif tag == 'img' and self._in_poster:
+            # When in poster, img contains the link to the poster image
             for a in attrs:
                 if a[0] == 'src':
                     self.attrs['poster_url'] = a[1]
 
     def handle_data(self, data):
-        if self._in_bd:
-            bd = json.loads(data)
-            self.attrs['plot'] = bd['description']
-            self.attrs['genre'] = bd['genre']
-            self.attrs['rating'] = bd['aggregateRating']['ratingValue']
+        if self._in_db:
+            db = json.loads(data)
+            self.attrs['plot'] = db['description']
+            self.attrs['genre'] = db['genre']
+            self.attrs['rating'] = db['aggregateRating']['ratingValue']
 
     def handle_endtag(self, tag):
         if tag == 'script':
-            self._in_bd = False
+            self._in_db = False
         elif tag == 'div':
             self._in_poster = False
 
 
-class SeasonParser(HTMLParser):
-    '''Parse the IMDB page that contains a season's episodes descriptions.'''
+class SeasonParser(html.parser.HTMLParser):
+    '''Parse the IMDB page that contains a season's episodes descriptions.
+
+    <div class="list_item (odd|even)">
+    ...
+    <img width="200" height="112" class="zero-z-index" ... src="STILL">
+    ...
+    <meta itemprop="episodeNumber" content="2"/>
+    <div class="airdate">AIRDATE</div>
+    <strong><a href="..." title="TITLE" itemprop="name">TITLE</a></strong>
+    ...
+    <div class="ipl-rating-star ">
+      ...
+      <span class="ipl-rating-star__rating">RATING</span>
+      ...
+    </div>
+    <div class="item_description" itemprop="description">PLOT</div>
+    ...
+    </div>
+    '''
 
     def __init__(self, season):
         super(SeasonParser, self).__init__()
+        # Holds the dictionary of episodes for the requested season
         self.episodes = {}
+        # Holds a dictionary with all the seasons (only one season is requested
+        # at a time, but is for easy integration with the IMDBTitle object).
         self.attrs = {'seasons': {str(season): self.episodes}}
+        # True if we are inside the <div> element that contains the airdate
         self._in_airdate = False
+        # True if we are inside the <div> element which is the top level rating
+        # containter
         self._in_rating_container = False
+        # True if we are inside the <span> element that contains the rating
         self._in_rating = False
+        # True if we are inside the <div> element that contains the episode
+        # plot.
         self._in_plot = False
+        # True if we are inside the <a> element that contains the title
         self._in_title = False
 
     def handle_starttag(self, tag, attrs):
@@ -193,7 +259,7 @@ class SeasonParser(HTMLParser):
                 elif a[0] == 'src':
                     still = a[1]
             if is_still:
-                self.current['still'] = still
+                self.current_episode['still'] = still
         elif tag == 'meta':
             # Check if it is the episode number
             is_episodenumber = False
@@ -203,14 +269,15 @@ class SeasonParser(HTMLParser):
                 elif a[0] == 'content':
                     episodenumber = a[1]
             if is_episodenumber:
-                self.episodes[episodenumber] = self.current
+                self.episodes[episodenumber] = self.current_episode
         elif tag == 'div':
             for a in attrs:
                 if a == ('class', 'list_item odd') or a == (
                         'class', 'list_item even'):
                     # New episode
-                    self.current = {}
-                if a == ('class', 'airdate'):
+                    self.current_episode = {}
+                    break
+                elif a == ('class', 'airdate'):
                     self._in_airdate = True
                     break
                 elif a == ('class', 'ipl-rating-star '):
@@ -232,13 +299,13 @@ class SeasonParser(HTMLParser):
 
     def handle_data(self, data):
         if self._in_airdate:
-            self.current['air_date'] = data.strip()
+            self.current_episode['air_date'] = data.strip()
         elif self._in_rating:
-            self.current['rating'] = float(data)
+            self.current_episode['rating'] = float(data)
         elif self._in_plot:
-            self.current['plot'] = data.strip()
+            self.current_episode['plot'] = data.strip()
         elif self._in_title:
-            self.current['title'] = data
+            self.current_episode['title'] = data
 
     def handle_endtag(self, tag):
         if tag == 'div':
@@ -255,73 +322,66 @@ class SeasonParser(HTMLParser):
 
 
 class IMDBTitle(object):
-    '''Represents a title in the IMDB database.
+    '''Represents a title in the IMDB database.'''
 
-    Constructor parameters:
-      * attrs: attributes of this title.
-    '''
+    def __init__(self, imdb_id, attrs):
+        self.id = imdb_id
+        self._attrs = attrs
 
-    def __init__(self, attrs):
-        self.attrs = dict((k, v) for k, v in attrs.items())
+    def __getitem__(self, attr):
+        return self._attrs[attr]
 
-    @gen.coroutine
+    @tornado.gen.coroutine
     def fetch(self):
         '''Obtain the remaining attributes from the title's main IMDB page.'''
-        try:
-            # Fetch the title page
-            imdb_id = self.attrs['imdb_id']
-            url = _IMDB_TITLE.format(imdb_id)
-            http_client = AsyncHTTPClient()
-            print('fetching', url)
-            response = yield http_client.fetch(
-                url, headers={'Accept-Language': 'en-US'})
-            # Parse the important information
-            parser = TitleParser()
-            parser.feed(response.body.decode('utf-8'))
-            self.attrs.update(parser.attrs)
-        except KeyError:
-            pass
+        # Fetch the title page
+        url = _IMDB_TITLE_URL.format(self.id)
+        http_client = tornado.httpclient.AsyncHTTPClient()
+        response = yield http_client.fetch(url, headers=_HTTP_HEADERS)
+        # Parse the important information
+        parser = TitleParser()
+        parser.feed(response.body.decode('utf-8'))
+        self._attrs.update(parser.attrs)
 
-    @gen.coroutine
+    @tornado.gen.coroutine
     def fetch_season(self, season):
         '''Obtain a given season's episodes descriptions.'''
-        try:
-            # Fetch the title page
-            imdb_id = self.attrs['imdb_id']
-            url = _IMDB_SEASON.format(imdb_id, season)
-            http_client = AsyncHTTPClient()
-            print('fetching', url)
-            response = yield http_client.fetch(
-                url, headers={'Accept-Language': 'en-US'})
-            # Parse the important information
-            parser = SeasonParser(season)
-            parser.feed(response.body.decode('utf-8'))
-            self.attrs.update(parser.attrs)
-        except KeyError:
-            pass
+        # Fetch the title page
+        url = _IMDB_SEASON_URL.format(self.id, season)
+        http_client = tornado.httpclient.AsyncHTTPClient()
+        response = yield http_client.fetch(url, headers=_HTTP_HEADERS)
+        # Parse the important information
+        parser = SeasonParser(season)
+        parser.feed(response.body.decode('utf-8'))
+        self._attrs.update(parser.attrs)
 
 
-@gen.coroutine
-def search(title, title_type, year=None):
+@tornado.gen.coroutine
+def search(title, title_types, year=None):
     '''Search by title in the IMDB site.
-    title_type might be: 'feature' or 'tv_series'.
+    title_type might be one of: 'Movie', 'TV Series', 'Video', 'Short',
+    'TV Mini-Series', 'TV Movie', 'TV Episode' or 'Video Game'.
     '''
-    http_client = AsyncHTTPClient()
+    # Check that the type of title is correct
+    for t in title_types:
+        if t not in _SEARCH_TYPES:
+            raise ValueError("wrong type '{}'".format(t))
+    # Build the URL of the search page
+    search_attributes = {'ref_': 'nv_sr_fn', 's': 'tt', 'q': title}
+    url = '{}?{}'.format(
+        _IMDB_SEARCH_URL, urllib.parse.urlencode(search_attributes))
+
     # Fetch the list of titles
-    search_attributes = {
-        'title': title,
-        'title_type': ','.join(title_type),
-        'view': 'simple',
-    }
-    if year is not None:
-        search_attributes['release_date'] = '{0},{0}'.format(year)
-    url = '{}?{}'.format(_IMDB_SEARCH_TITLE, urllib.parse.urlencode(
-        search_attributes))
-    print('fetching', url)
-    response = yield http_client.fetch(
-        url, headers={'Accept-Language': 'en-US'})
-    # Parse the important information
-    parser = SearchResultParser()
+    http_client = tornado.httpclient.AsyncHTTPClient()
+    response = yield http_client.fetch(url, headers=_HTTP_HEADERS)
+
+    # Parse the desired information from the result
+    parser = SearchParser()
     parser.feed(response.body.decode('utf-8'))
-    return [IMDBTitle(a) for a in parser.results]
+
+    # Return the list of titles
+    # Keep only the titles with the right type or, if the year is given, those
+    # corresponding to that year.
+    return [a for a in parser.results
+        if a['type'] in title_types and (year is None or a['year'] == year)]
 
