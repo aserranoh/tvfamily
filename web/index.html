@@ -13,12 +13,12 @@
     </ul>
     <div class="content">
         <ul class="titles-list">
-            {% if titles %}
-                {% for t, poster_url in zip(titles, posters) %}
+            {% if medias %}
+                {% for m in medias %}
                     <li>
-                        <a href="/title?category={{current}}&id={{t.filename}}">
-                            <img class="poster" src="{{poster_url}}">
-                            <span>{{t.title}}</span>
+                        <a href="/title?category={{current}}&id={{m.title.name}}">
+                            <img class="poster" src="{{m.title.poster_url}}">
+                            <span>{{str(m)}}</span>
                         </a>
                     </li>
                 {% end %}

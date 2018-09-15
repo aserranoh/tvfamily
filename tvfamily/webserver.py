@@ -75,7 +75,7 @@ class RootHandler(BaseHandler):
         The root page must redirect to the list of media of the first
         category.
         '''
-        category = next(self._core.get_categories())
+        category = self._core.get_categories()[0]
         self.redirect('/categories/{}'.format(category.key))
 
 class CategoriesHandler(BaseHandler):
@@ -83,16 +83,10 @@ class CategoriesHandler(BaseHandler):
 
     @tornado.gen.coroutine
     def get(self, category):
-        '''Serve the list of medias of a given category page.
-
-        category is the name of the current category.
-        '''
-        # Get the title's posters
-        posters = yield [t.get_attr('poster_url')
-            for t in self._core.get_titles(category)]
-        self.render('index.html',
-            categories=self._core.get_categories(), current=category,
-            titles=self._core.get_titles(category), posters=posters)
+        '''Serve the suggested medias of a given category.'''
+        medias = yield self._core.top(category)
+        self.render('index.html', categories=self._core.get_categories(),
+            current=category, medias=medias)
 
 class TitleHandler(BaseHandler):
     '''Title main page.'''

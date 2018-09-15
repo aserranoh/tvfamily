@@ -29,7 +29,7 @@ class ThePirateBayTestCase(unittest.TestCase):
             torrents = yield thepiratebay.top('movies', options)
             return torrents
         l = tornado.ioloop.IOLoop.current().run_sync(cor)
-        self.assertEqual(len(l), 300)
+        self.assertEqual(len(l), 200)
         for t in l:
             self.assertIsInstance(t.seeders, int)
             self.assertIsInstance(t.leechers, int)

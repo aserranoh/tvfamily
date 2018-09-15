@@ -41,9 +41,10 @@ _TPB_CATEGORIES = {
     # TV Shows: 205, HD TV Shows: 208
     'tv_series': [205, 208],
     # Movies: 201, Movies DVDR: 202, HD Movies: 207
-    'movies': [201, 202, 207],
+    'movies': [201, 207],
 }
 _RE_SIZE = re.compile(r'Size ([\d.]+.*?[MG]iB)')
+_HTTP_HEADERS = {'Accept-Language': 'en-US'}
 
 
 class TopParser(html.parser.HTMLParser):
@@ -135,14 +136,14 @@ def top(category, options):
     '''Search ThePirateBay site for the top videos.'''
     http_client = tornado.httpclient.AsyncHTTPClient()
     torrents = []
-    for tpb_category in _TPB_CATEGORIES[category]:
-        url = '{}/top/{}'.format(
-            options['plugins']['thepiratebay']['url'], tpb_category)
-        response = yield http_client.fetch(url,
-            headers={'Accept-Language': 'en-US'})
-        # Parse the important information
+    urls = ['{}/top/{}'.format(options['plugins']['thepiratebay']['url'], c)
+        for c in _TPB_CATEGORIES[category]]
+    contents = yield [http_client.fetch(url, headers=_HTTP_HEADERS)
+        for url in urls]
+    # Parse the important information
+    for c in contents:
         parser = TopParser()
-        parser.feed(response.body.decode('utf-8'))
+        parser.feed(c.body.decode('utf-8'))
         torrents.extend(parser.torrents)
     return torrents
 

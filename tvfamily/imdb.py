@@ -48,14 +48,15 @@ _SEARCH_TYPES = ['TV Series', 'Short', 'TV Episode', 'Video', 'TV Movie',
 _RE_SEARCH_TYPE = re.compile(r'\(({})\)'.format('|'.join(_SEARCH_TYPES)))
 # Add 'Movie' as search type (in IMDB movies don't have explicit type)
 _SEARCH_TYPES.append('Movie')
-_RE_TITLE_YEARS = re.compile(
-    r'\(.*?(?P<air_year>\d{4})(–(?P<end_year>\d{4}|\s*))?\)$')
+_RE_TITLE = re.compile(
+    r'(?P<title>.*?)\s+\(.*?(?P<air_year>\d{4})(–(?P<end_year>\d{4}|\s*))?\)$')
 
-def _get_years(data):
+def _parse_title(data):
     '''Return the air and end year of a tv series.'''
     air_year = end_year = None
-    m = _RE_TITLE_YEARS.search(data)
+    m = _RE_TITLE.search(data)
     if m:
+        title = m.group('title')
         air_year = int(m.group('air_year'))
         end_year = m.group('end_year')
         if end_year is not None:
@@ -63,7 +64,7 @@ def _get_years(data):
                 end_year = int(end_year)
             else:
                 end_year = 0
-    return air_year, end_year
+    return title, air_year, end_year
 
 
 class SearchParser(html.parser.HTMLParser):
@@ -181,8 +182,8 @@ class TitleParser(html.parser.HTMLParser):
             in_title = False
             if attrs[0] == ('property', 'og:title'):
                 # Get the air and end years contained in the title
-                self.attrs['air_year'], self.attrs['end_year'] = _get_years(
-                    attrs[1][1])
+                (self.attrs['title'], self.attrs['air_year'],
+                    self.attrs['end_year']) = _parse_title(attrs[1][1])
         elif tag == 'div':
             # Check if we are in the poster <div> element
             for a in attrs:
@@ -324,9 +325,12 @@ class SeasonParser(html.parser.HTMLParser):
 class IMDBTitle(object):
     '''Represents a title in the IMDB database.'''
 
-    def __init__(self, imdb_id, attrs):
+    def __init__(self, imdb_id, attrs=None):
         self.id = imdb_id
-        self._attrs = attrs
+        if attrs is None:
+            self._attrs = {}
+        else:
+            self._attrs = attrs
 
     def __getitem__(self, attr):
         return self._attrs[attr]
@@ -383,5 +387,6 @@ def search(title, title_types, year=None):
     # Keep only the titles with the right type or, if the year is given, those
     # corresponding to that year.
     return [a for a in parser.results
-        if a['type'] in title_types and (year is None or a['year'] == year)]
+        if a['type'] in title_types
+        and (year is None or a['year'] == year or a['year'] == year - 1)]
 

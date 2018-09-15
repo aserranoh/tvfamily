@@ -46,19 +46,6 @@ tornado.httpclient.AsyncHTTPClient.configure(
 class HTTPServerError(Exception): pass
 
 
-class Options(object):
-    '''Manages configuration options.'''
-
-    def __init__(self, options_file):
-        # Try to read the options from the options file
-        with open(options_file, 'r') as f:
-            self._options = json.loads(f.read())
-
-    def get_options(self):
-        '''Return the hierarchy of optopns.'''
-        return self._options
-
-
 class HTTPServer(object):
     '''A generic HTTPServer.'''
 
@@ -72,7 +59,8 @@ class HTTPServer(object):
         self._command_line_options(version, **kwargs)
         # Load the configuration file
         try:
-            self.options = Options(self.config_file)
+            with open(self.config_file, 'r') as f:
+                self.options = json.loads(f.read())
         except OSError:
             msg = 'cannot load options file'
             print('error:', msg, file=sys.stderr)
@@ -109,6 +97,6 @@ class HTTPServer(object):
 
     def run(self):
         '''Run the HTTP server and start processing requests.'''
-        self._app.listen(self.options.get_options()['server']['port'])
+        self._app.listen(self.options['server']['port'])
         tornado.ioloop.IOLoop.current().start()
 
