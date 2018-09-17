@@ -33,8 +33,10 @@ body {
     display: block;
     color: black;
     text-align: center;
-    padding: 16px 20px;
+    padding-top: 16px;
     font-size: 20px;
+    width: 120px;
+    height: 39px;
 }
 
 .navbar a:hover {
@@ -48,6 +50,18 @@ body {
 a.navbar-active > span {
     background-color: black;
     color: white;
+}
+
+.navbar span.settings {
+    display: block;
+    padding: 0;
+    background: url('/settings-black.svg');
+    width: 55px;
+    height: 55px;
+}
+
+.navbar a:hover > span.settings {
+    background: url('/settings-white.svg');
 }
 
 .content {
@@ -94,6 +108,50 @@ a.navbar-active > span {
 h1, h2, h3, p, .title-description span, .episode-description span {
     color: white;
     text-shadow: 0 0 5px black;
+}
+
+.form-settings {
+    margin-left: 20px;
+}
+
+.form-settings span {
+    color: white;
+    text-shadow: 0 0 3px black;
+}
+
+.form-settings div {
+    height: 40px;
+}
+
+.form-title-label {
+    display: inline-block;
+    width: 150px;
+}
+
+.form-checkbox-group span {
+    display: inline-block;
+    width: 100px;
+}
+
+.button {
+    display: block;
+    text-align: center;
+    text-decoration: none;
+    background-color: #f3ce13;
+    color: black;
+    font-size: 20px;
+    padding: 15px 70px;
+    border: none;
+}
+
+.button:hover {
+    cursor: pointer;
+    background-color: black;
+    color: white;
+}
+
+.form-save-button {
+    margin: 30px 0 0 150px;
 }
 
 .centered-title {

@@ -9,20 +9,46 @@
         <li style="float: right;"><a href="/"><span>Back</span></a><li>
     </ul>
     <div class="content">
-        <form action="/save-settings" method="post">
+        <form class="form-settings" action="/save-settings" method="post">
             <h3>IMDB</h3>
             <div>
-                <span>Cache expiracy</span>
+                <span class="form-title-label">Cache expiracy</span>
                 <select name="imdb_cache_expiracy">
                     {% set s = settings['imdb_cache_expiracy'] %}
                     <option value="0" {{'selected' if s == 0 else ''}}>No cache</option>
-                    <option value="1" {{'selected' if s == 1 else ''}}>1 day</option>
-                    <option value="7" {{'selected' if s == 7 else ''}}>7 days</option>
-                    <option value="30" {{'selected' if s == 30 else ''}}>30 days</option>
+                    <option value="86400" {{'selected' if s == 86400 else ''}}>1 day</option>
+                    <option value="604800" {{'selected' if s == 604800 else ''}}>7 days</option>
+                    <option value="2592000" {{'selected' if s == 2592000 else ''}}>30 days</option>
                     <option value="-1" {{'selected' if s < 0 else ''}}>Never</option>
                 </select>
             </div>
-            <input type="submit" value="Save">
+            <h3>Torrents filters</h3>
+            <div>
+                {% set f = settings['torrents_filters'] %}
+                <span class="form-title-label">Quality</span>
+                <span class="form-checkbox-group">
+                    {% for q in torrents_filters[0] %}
+                        <span><input type="checkbox" name="{{q}}" {{'checked' if f[0] is None or q in f[0] else ''}}>{{q}}</span>
+                    {% end %}
+                </span>
+            </div>
+            <div>
+                <span class="form-title-label">Codec</span>
+                <span class="form-checkbox-group">
+                    {% for c in torrents_filters[1] %}
+                        <span><input type="checkbox" name="{{c}}" {{'checked' if f[1] is None or c in f[1] else ''}}>{{c}}</span>
+                    {% end %}
+                </span>
+            </div>
+            <div>
+                <span class="form-title-label">Resolution</span>
+                <span class="form-checkbox-group">
+                    {% for r in torrents_filters[2] %}
+                        <span><input type="checkbox" name="{{r}}" {{'checked' if f[2] is None or r in f[2] else ''}}>{{r}}</span>
+                    {% end %}
+                </span>
+            </div>
+            <input class="button form-save-button" type="submit" value="Save">
         </form>
     </div>
 </body>

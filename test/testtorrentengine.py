@@ -73,7 +73,7 @@ class TorrentEngineTestCase(unittest.TestCase):
             options = {'plugins': {'thepiratebay': {
                 'url': 'https://pirate.bet'}}}
             torrents = yield t.top('movies', options,
-                filter=(['WEB-DL', 'Blu-ray'], ['h264'], None))
+                filter=(['WEB-DL', 'Blu-ray'], ['H.264'], None))
             return torrents
         l = tornado.ioloop.IOLoop.current().run_sync(cor)
         for x in l:
@@ -83,5 +83,12 @@ class TorrentEngineTestCase(unittest.TestCase):
             self.assertTrue((q is None
                 or te._FILTER_QUALITY['Blu-ray'].match(q)
                 or te._FILTER_QUALITY['WEB-DL'].match(q))
-                and (c is None or te._FILTER_CODEC['h264'].match(c)))
+                and (c is None or te._FILTER_CODEC['H.264'].match(c)))
+
+    def test_list_filters(self):
+        t = tvfamily.core.TorrentEngine(os.path.join(ROOT_PATH, 'plugins'))
+        f = t.get_filter_values()
+        expected = (t._QUALITY_VALUES, t._CODEC_VALUES, t._RESOLUTION_VALUES)
+        for x, e in zip(f, expected):
+            self.assertEqual(x, e)
 

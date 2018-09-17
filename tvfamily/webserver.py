@@ -258,18 +258,29 @@ class SettingsHandler(BaseHandler):
 
     def get(self):
         '''Show the settings page.'''
-        self.render('settings.html', settings=self._core.get_settings())
+        self.render('settings.html',
+            torrents_filters=self._core.get_torrents_filters(),
+            settings=self._core.get_settings())
 
 
 class SaveSettingsHandler(BaseHandler):
     '''Save the settings.'''
 
     def post(self):
+        '''Update the runtime settings in the core.'''
+        # Cache expiracy
         cache_expiracy = int(self.get_body_argument('imdb_cache_expiracy'))
+        # Torrents filters
+        torrents_filters=self._core.get_torrents_filters()
+        new_filters = [[v for v in f
+            if self.get_body_argument(v, default=None) == 'on']
+            for f in torrents_filters]
+        # Build the new settings dictionary
         settings = {
             'imdb_cache_expiracy': cache_expiracy,
+            'torrents_filters': new_filters,
         }
-        self._core.set_settings(settings)
+        self._core.update_settings(settings)
         self.redirect('/')
 
 

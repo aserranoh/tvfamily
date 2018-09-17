@@ -64,9 +64,9 @@ _SETTINGS_DEFAULTS = {
     # Expiracy for the IMDB cached data, in seconds (1 day)
     'imdb_cache_expiracy': 24 * 3600,
     # Torrents types filters
-    'torrents_filter': [
+    'torrents_filters': [
         ['DVD-Rip', 'HDTV', 'WEB-DL', 'WEBRip', 'Blu-ray'],
-        ['h264'],
+        ['H.264'],
         None
     ]
 }
@@ -169,10 +169,16 @@ class Core(object):
         '''Return the top list of medias of a given category.'''
         # First, get the top list of torrents
         torrents = yield self._torrent_engine.top(
-            category, self._options, self._settings['torrents_filter'])
+            category, self._options, self._settings['torrents_filters'])
         medias = yield self._titles_db.get_medias_from_torrents(
             torrents, category)
         return medias
+
+    # Torrent related functions
+
+    def get_torrents_filters(self):
+        '''Return the list of quality, codec and resolution possible values.'''
+        return self._torrent_engine.get_filter_values()
 
 
 class Settings(object):
@@ -660,25 +666,34 @@ class TorrentEngine(object):
     Interface with the torrents sites (via the different plugins).
     '''
 
-    _FILTER_QUALITY = {
-        'Cam': re.compile(r'(?:HD)?CAM|CamRip', re.I),
-        'Telesync': re.compile(r'(?:HD-?)?TS|telesync', re.I),
-        'Screener': re.compile(r'DvDScr', re.I),
-        'DVD-Rip': re.compile(r'DVDRip|DVDRIP', re.I),
-        'HDTV': re.compile(r'(?:PPV\.)?[HP]DTV|hdtv', re.I),
-        'WEB-DL': re.compile(r'(?:PPV )?WEB-?DL(?: DVDRip)?|HDRip', re.I),
-        'WEBRip': re.compile(r'W[EB]BRip', re.I),
-        'Blu-ray': re.compile(r'B[DR]Rip|BluRay', re.I),
-    }
-    _FILTER_CODEC = {
-        'XviD': re.compile(r'xvid', re.I),
-        'h264': re.compile(r'[hx]\.?264', re.I),
-        'h265': re.compile(r'[hx]\.?265', re.I),
-    }
-    _FILTER_RESOLUTION = {
-        '720p': re.compile(r'720p', re.I),
-        '1080p': re.compile(r'1080p', re.I),
-    }
+    _QUALITY_VALUES = ['Cam', 'Telesync', 'Screener', 'DVD-Rip', 'HDTV',
+        'WEB-DL', 'WEBRip', 'Blu-ray']
+    _CODEC_VALUES = ['XviD', 'H.264', 'H.265']
+    _RESOLUTION_VALUES = ['720p', '1080p']
+
+    _RE_QUALITY = [
+        re.compile(r'(?:HD)?CAM|CamRip', re.I),
+        re.compile(r'(?:HD-?)?TS|telesync', re.I),
+        re.compile(r'DvDScr', re.I),
+        re.compile(r'DVDRip|DVDRIP', re.I),
+        re.compile(r'(?:PPV\.)?[HP]DTV|hdtv', re.I),
+        re.compile(r'(?:PPV )?WEB-?DL(?: DVDRip)?|HDRip', re.I),
+        re.compile(r'W[EB]BRip', re.I),
+        re.compile(r'B[DR]Rip|BluRay', re.I),
+    ]
+    _RE_CODEC = [
+        re.compile(r'xvid', re.I),
+        re.compile(r'[hx]\.?264', re.I),
+        re.compile(r'[hx]\.?265', re.I),
+    ]
+    _RE_RESOLUTION = [
+        re.compile(r'720p', re.I),
+        re.compile(r'1080p', re.I),
+    ]
+
+    _FILTER_QUALITY = dict(zip(_QUALITY_VALUES, _RE_QUALITY))
+    _FILTER_CODEC = dict(zip(_CODEC_VALUES, _RE_CODEC))
+    _FILTER_RESOLUTION = dict(zip(_RESOLUTION_VALUES, _RE_RESOLUTION))
 
     def __init__(self, plugins_path):
         # Path to the plugins files
@@ -779,4 +794,9 @@ class TorrentEngine(object):
                 method.__module__, method.__name__, e))
             result = None
         return result
+
+    def get_filter_values(self):
+        '''Return the quality, codec and resolution filter values.'''
+        return (self._QUALITY_VALUES, self._CODEC_VALUES,
+            self._RESOLUTION_VALUES)
 
