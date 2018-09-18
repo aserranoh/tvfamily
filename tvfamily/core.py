@@ -366,6 +366,10 @@ class Title(object):
     def poster_url(self):
         return self._imdb_title['poster_url']
 
+    @property
+    def rating(self):
+        return self._imdb_title['rating']
+
     @tornado.gen.coroutine
     def fetch(self):
         '''Fetch the attributes from IMDB.'''
@@ -404,7 +408,7 @@ class Title(object):
 class TVSerie(Title):
     '''Represents a TV Serie.'''
 
-    def get_episode(self, season, episode):
+    """def get_episode(self, season, episode):
         '''Return the given episode of this tv series.'''
         if self._episodes is None:
             self._add_episodes()
@@ -417,7 +421,7 @@ class TVSerie(Title):
         '''
         if self._episodes is None:
             self._add_episodes()
-        return sorted(self._episodes[season].keys())
+        return sorted(self._episodes[season].keys())"""
 
     def get_media(self, torrent):
         '''Return this tv series' episode related to the torrent.'''
@@ -433,54 +437,27 @@ class TVSerie(Title):
     @tornado.gen.coroutine
     def fetch_season(self, season):
         '''Fetch the attributes of a season from IMDB.'''
-        title = yield self.get_imdb_title()
-        # Fetch the season attributes
-        yield title.fetch_season(season)
+        # Check the cache
         try:
-            seasons = self._attrs['seasons']
-            seasons.update(title.attrs['seasons'])
-        except KeyError:
-            seasons = self._attrs['seasons'] = title.attrs['seasons']
-        s = seasons[str(season)]
-        # Update the timestamp for this season
-        s['timestamp'] = time.time()
-        # Save the attributes in the file
-        self.save_attrs()
+            self.check_cache(self._imdb_title['seasons'][str(season)])
+        except (ValueError, KeyError):
+            # The IMDB data must be fetched
+            yield self._imdb_title.fetch_season(season)
+            # Update the timestamp for this season
+            s = self._imdb_title['seasons'][str(season)]
+            s['timestamp'] = time.time()
+            # Save the IMDB data to the file
+            self.save_imdb_data()
 
-    @tornado.gen.coroutine
-    def get_episode_attr(self, season, episode, attr):
-        '''Return an attribute of the given episode of the given season of this
-        tv_series.
-        '''
-        try:
-            # The season index must be a string because in json all the keys
-            # are strings
-            s = self._attrs['seasons'][str(season)]
-            # Check the timestamp for this season
-            self.check_cache(s)
-        except (KeyError, ValueError):
-            # This season episodes is not cached or the cache has expired
-            yield self.fetch_season(season)
-            s = self._attrs['seasons'][str(season)]
-        return s[str(episode)][attr]
-
-    def get_seasons(self):
+    """def get_seasons(self):
         '''Return the seasons available for this title.'''
         if self._episodes is None:
             self._add_episodes()
-        return sorted(self._episodes.keys())
-
-    @classmethod
-    def has_episodes(cls, self):
-        '''Return True if this title has episodes, so True for TVSeries.'''
-        return True
+        return sorted(self._episodes.keys())"""
 
 
 class Episode(object):
     '''Represents an episode of a tv serie.'''
-
-    _DEFAULT_ATTRS = {'still': '/tvfamily.svg', 'plot': 'No plot.',
-        'air_date': 'No air date', 'rating': 'Unrated', 'title': 'No title'}
 
     def __init__(self, title, season, episode):
         self.title = title
@@ -501,17 +478,22 @@ class Episode(object):
         return '{} {}x{:02d}'.format(
             self.title.name, self.season, self.episode)
 
-    """@tornado.gen.coroutine
-    def get_attr(self, attr):
-        '''Return the attribute attr.'''
-        try:
-            a = yield self._title.get_episode_attr(
-                self.season, self.episode, attr)
-        except (tornado.curl_httpclient.CurlError, KeyError):
-            a = self._DEFAULT_ATTRS[attr]
-        return a
+    @tornado.gen.coroutine
+    def fetch(self):
+        '''Fetch the information for this episode.'''
+        yield self.title.fetch_season(self.season)
 
-    def get_video(self):
+    @property
+    def rating(self):
+        try:
+            db_season = self.title._imdb_title['seasons'][str(self.season)]
+            db_episode = db_season[str(self.episode)]
+            rating = db_episode['rating']
+        except KeyError:
+            rating = None
+        return rating
+
+    """def get_video(self):
         '''Return the video associated with this episode.'''
         return self._video"""
 
@@ -543,10 +525,6 @@ class Movie(Title):
         return self
 
     """@classmethod
-    def has_episodes(cls, self):
-        '''Return True if this title has episodes, so False for Movies.'''
-        return False
-
     def get_video(self):
         '''Return the video associated with this movie.'''
         return self._video"""
@@ -590,6 +568,9 @@ class TitlesDB(object):
             if m not in set_medias:
                 final_medias.append(m)
                 set_medias.add(m)
+        # Fetch the media IMDB data (in case of, for example, episodes,
+        # fetch its individual information)
+        yield [m.fetch() for m in final_medias]
         return final_medias
 
     @tornado.gen.coroutine
