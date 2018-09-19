@@ -284,6 +284,17 @@ class SaveSettingsHandler(BaseHandler):
         self.redirect('/')
 
 
+class SearchHandler(BaseHandler):
+    '''Search a title.'''
+
+    @tornado.gen.coroutine
+    def get(self, category):
+        search_title = self.get_query_argument('title')
+        titles = yield self._core.search(search_title, category)
+        self.render('index.html', categories=self._core.get_categories(),
+            current=category, medias=titles)
+
+
 class WebServer(tvfamily.httpserver.HTTPServer):
     '''The HTTP server that serves the pages to the user.'''
 
@@ -307,6 +318,7 @@ class WebServer(tvfamily.httpserver.HTTPServer):
                     dict(path='data')),
                 (r'/settings', SettingsHandler, d),
                 (r'/save-settings', SaveSettingsHandler, d),
+                (r'/search/(.+)', SearchHandler, d),
                 ]
             self.add_handlers(handlers)
         except (tvfamily.httpserver.HTTPServerError,

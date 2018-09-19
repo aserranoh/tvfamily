@@ -160,9 +160,9 @@ class Core(object):
         '''Return the list of videos categories.'''
         return self._titles_db.get_categories()
 
-    def get_title(self, category, name):
+    """def get_title(self, category, name):
         '''Return the title within category called name.'''
-        return self._titles_db.get_title(category, name)
+        return self._titles_db.get_title(category, name)"""
 
     @tornado.gen.coroutine
     def top(self, category):
@@ -173,6 +173,12 @@ class Core(object):
         medias = yield self._titles_db.get_medias_from_torrents(
             torrents, category)
         return medias
+
+    @tornado.gen.coroutine
+    def search(self, title, category):
+        '''Search titles by name in IMDB.'''
+        titles = yield self._titles_db.search(title, category)
+        return titles
 
     # Torrent related functions
 
@@ -354,6 +360,9 @@ class Title(object):
                 self._imdb_title._attrs.update(json.loads(f.read()))
         except IOError: pass
 
+    def __str__(self):
+        return self.name
+
     @property
     def _cached_file(self):
         return os.path.join(self._path, self._imdb_title.id + '.json')
@@ -369,6 +378,10 @@ class Title(object):
     @property
     def rating(self):
         return self._imdb_title['rating']
+
+    @property
+    def title(self):
+        return self
 
     @tornado.gen.coroutine
     def fetch(self):
@@ -508,9 +521,6 @@ class Movie(Title):
     def __hash__(self):
         return hash(self.title._imdb_title.id)
 
-    def __str__(self):
-        return self.name
-
     def get_media(self, torrent):
         '''Return itself.'''
         return self
@@ -519,10 +529,6 @@ class Movie(Title):
     def is_valid(cls, torrent):
         '''Return True if torrent contains a valid Movie.'''
         return True
-
-    @property
-    def title(self):
-        return self
 
     """@classmethod
     def get_video(self):
@@ -640,6 +646,15 @@ class TitlesDB(object):
         k = self._get_torrent_key(torrent)
         self._torrents_to_imdb[k] = imdb_id
         self._save_torrents_to_imdb()
+
+    @tornado.gen.coroutine
+    def search(self, title, category):
+        '''Search titles by name in IMDB.'''
+        category = self._dict_categories[category]
+        results = yield tvfamily.imdb.search(title, category.imdb_type)
+        titles = [category.get_title(x) for x in results]
+        yield [t.fetch() for t in titles]
+        return titles
 
 
 class TorrentEngine(object):

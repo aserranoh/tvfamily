@@ -165,11 +165,12 @@ class TitleParser(html.parser.HTMLParser):
     def __init__(self):
         super(TitleParser, self).__init__()
         # Hold the title's attributes to return
-        self.attrs = {}
+        # By default set the poster_url to None, in case it's not found
+        self.attrs = {'poster_url': None}
         # True if we are inside the element that contains the DB in JSON format
         self._in_db = False
         # True if we are inside the <div> element that contains the poster
-        self._in_poster = True
+        self._in_poster = False
 
     def handle_starttag(self, tag, attrs):
         if tag == 'script':
@@ -198,9 +199,14 @@ class TitleParser(html.parser.HTMLParser):
     def handle_data(self, data):
         if self._in_db:
             db = json.loads(data)
-            self.attrs['plot'] = db['description']
+            # The description may be missing
+            self.attrs['plot'] = db.get('description', 'No description.')
             self.attrs['genre'] = db['genre']
-            self.attrs['rating'] = db['aggregateRating']['ratingValue']
+            # The rating may be missing
+            try:
+                self.attrs['rating'] = db['aggregateRating']['ratingValue']
+            except KeyError:
+                self.attrs['rating'] = None
 
     def handle_endtag(self, tag):
         if tag == 'script':

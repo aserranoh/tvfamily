@@ -64,6 +64,34 @@ a.navbar-active > span {
     background: url('/settings-white.svg');
 }
 
+.navbar-search {
+    border: none;
+    height: 40px;
+    margin: 5px 5px 0 5px;
+    font-size: 20px;
+    padding-left: 12px;
+    border: 2px solid grey;
+    border-radius: 8px;
+    transition: 0.5s;
+}
+
+.navbar .search {
+    display: block;
+    padding: 0;
+    width: 55px;
+    height: 55px;
+    background: url('/search-black.svg');
+}
+
+.navbar .search:hover {
+    background: url('/search-white.svg') no-repeat;
+    background-color: grey;
+}
+
+.navbar-search:focus {
+    border: 2px solid black;
+}
+
 .content {
     margin-top: 80px;
 }

@@ -9,6 +9,10 @@
         {% for c in categories %}
             <li><a class="{{'navbar-active' if c.key == current else ''}}" href="/categories/{{c.key}}"><span>{{c.name}}</span></a></li>
         {% end %}
+        <form action="/search/{{current}}" method="get">
+            <li><input type="text" name="title" class="navbar-search" placeholder="Search.."></li>
+            <li><input type="image" class="search" alt=""></li>
+        </form>
         <li style="float: right;"><a href="/settings"><span class="settings"/></a></li>
     </ul>
     <div class="content">
@@ -17,7 +21,8 @@
                 {% for m in medias %}
                     <li>
                         <a href="/title?category={{current}}&id={{m.title.name}}">
-                            <img class="poster" src="{{m.title.poster_url}}">
+                            {% set poster = m.title.poster_url %}
+                            <img class="poster" width="182px" height="268px" src="{{poster if poster is not None else '/tvfamily.svg'}}">
                             <div class="title-list-attrs">
                                 <div class="title-list-name">{{str(m)}}</div>
                                 {% if m.rating is not None %}
