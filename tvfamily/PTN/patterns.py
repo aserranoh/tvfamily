@@ -7,8 +7,9 @@ patterns = [
     ('year', '([\[\(]?((?:19[0-9]|20[01])[0-9])[\]\)]?)'),
     ('resolution', '([0-9]{3,4}p)'),
     ('quality', ('((?:PPV\.)?[HP]DTV|(?:HD)?CAM|B[DR]Rip|(?:HD-?)?TS|'
+                 '(?:HD-?)?TC|'
                  '(?:PPV )?WEB-?DL(?: DVDRip)?|HDRip|DVDRip|DVDRIP|'
-                 'CamRip|W[EB]BRip|BluRay|DvDScr|hdtv|telesync)')),
+                 'CamRip|W[EB]BRip|BluRay|DvDScr|hdtv|telesync|telecine)')),
     ('codec', '(xvid|[hx]\.?26[45])'),
     ('audio', ('(MP3|DD5\.?1|Dual[\- ]Audio|LiNE|DTS|'
                'AAC[.-]LC|AAC(?:\.?2\.0)?|'

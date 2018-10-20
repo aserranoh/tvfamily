@@ -20,6 +20,7 @@ along with tvfamily; see the file COPYING.  If not, see
 <http://www.gnu.org/licenses/>.
 '''
 
+import tornado.iostream
 import tornado.web
 
 import tvfamily.core
@@ -81,28 +82,25 @@ class RootHandler(BaseHandler):
 class CategoriesHandler(BaseHandler):
     '''Index page's handler (list of medias of a category).'''
 
-    @tornado.gen.coroutine
-    def get(self, category):
+    async def get(self, category):
         '''Serve the suggested medias of a given category.'''
-        medias = yield self._core.top(category)
+        medias = await self._core.top(category)
         self.render('index.html', categories=self._core.get_categories(),
             current=category, medias=medias)
 
 class TitleHandler(BaseHandler):
     '''Title main page.'''
 
-    @tornado.gen.coroutine
-    def get(self):
+    async def get(self):
         '''Serves the page with the caracteristics of a title.'''
         category = self.get_query_argument('category')
-        id = self.get_query_argument('id')
-        title = self._core.get_title(category, id)
+        imdb_id = self.get_query_argument('title')
+        title = await self._core.get_title(category, imdb_id)
         if title.has_episodes():
-            yield self._serve_episode(title)
+            self._serve_episode(title)
         else:
-            yield self._serve_movie(title)
+            await self._serve_movie(title)
 
-    @tornado.gen.coroutine
     def _serve_episode(self, title):
         '''Serve the page episode.html.'''
         # Get the season number
@@ -139,42 +137,30 @@ class TitleHandler(BaseHandler):
             episode_air_date=episode_air_date, episode_rating=episode_rating,
             episode_title=episode_title)
 
-    @tornado.gen.coroutine
-    def _serve_movie(self, title):
+    async def _serve_movie(self, title):
         '''Serve the page movie.html.'''
-        # Get title attributes
-        poster = yield title.get_attr('poster_url')
-        air_year = yield title.get_attr('air_year')
-        genre = yield title.get_attr('genre')
-        rating = yield title.get_attr('rating')
-        plot = yield title.get_attr('plot')
+        # Check if there's already a video downloaded for this title
+        torrents = None
+        video = await self._core.get_video_from_media(title)
+        # If not, search torrents for this title
+        if video is None:
+            torrents = await self._core.search_torrents(title.name)
         # Render the page
-        self.render('movie.html', title=title, poster=poster,
-            air_year=str(air_year), genre=', '.join(genre), rating=rating,
-            category=self.get_query_argument('category'), plot=plot)
+        self.render('movie.html', category=self.get_query_argument('category'),
+            title=title, video=video, torrents=torrents)
 
 class PlayHandler(BaseHandler):
     '''Handler of the page to play a video.'''
 
-    def get(self):
+    async def get(self):
         '''Serves the page with the video player.'''
         category = self.get_query_argument('category')
-        title = self._core.get_title(category, self.get_query_argument('id'))
-        if title.has_episodes():
-            self._play_episode(title, category)
-        else:
-            self._play_movie(title, category)
-
-    def _play_episode(self, title, category):
-        '''Play an episode.'''
-        season = int(self.get_query_argument('season'))
-        episode = int(self.get_query_argument('episode'))
-        self.render('playepisode.html', category=category, title=title,
-            season=season, episode=episode)
-
-    def _play_movie(self, title, category):
-        '''Play a movie.'''
-        self.render('playmovie.html', category=category, title=title)
+        imdb_id = self.get_query_argument('title')
+        video_file = self.get_query_argument('video')
+        title = await self._core.get_title(category, imdb_id)
+        video = self._core.get_video_from_file(video_file)
+        self.render('playmovie.html', category=category, title=title,
+            video=video)
 
 class VideoHandler(BaseHandler):
     '''Serves a video in chunks.'''
@@ -190,17 +176,12 @@ class VideoHandler(BaseHandler):
     def _get_cached_version(cls, abs_path):
         return None
 
-    @tornado.gen.coroutine
-    def get(self):
+    async def get(self):
         request_range = None
         range_header = self.request.headers.get('Range')
-        q = self.get_query_argument
-        title = self._core.get_title(q('category'), q('id'))
-        if title.has_episodes():
-            video = title.get_episode(
-                int(q('season')), int(q('episode'))).get_video()
-        else:
-            video = title.get_video()
+        # Obtain the video to play
+        video_file = self.get_query_argument('video')
+        video = self._core.get_video_from_file(video_file)
         # Obtain the start, end and total size of the range to serve
         if range_header:
             # As per RFC 2616 14.16, if an invalid Range header is specified,
@@ -230,7 +211,9 @@ class VideoHandler(BaseHandler):
         content = video.get_content(start, end)
         for chunk in content:
             self.write(chunk)
-            yield tornado.gen.Task(self.flush)
+            try:
+                await self.flush()
+            except tornado.iostream.StreamClosedError: pass
 
     def _set_headers(self, start, end, size):
         '''Set the headers for the response. start, end and size are the
@@ -287,10 +270,9 @@ class SaveSettingsHandler(BaseHandler):
 class SearchHandler(BaseHandler):
     '''Search a title.'''
 
-    @tornado.gen.coroutine
-    def get(self, category):
+    async def get(self, category):
         search_title = self.get_query_argument('title')
-        titles = yield self._core.search(search_title, category)
+        titles = await self._core.search(search_title, category)
         self.render('index.html', categories=self._core.get_categories(),
             current=category, medias=titles)
 

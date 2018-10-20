@@ -9,32 +9,40 @@
         <li style="float: right;"><a href="/categories/{{category}}"><span>Back</span></a></li>
     </ul>
     <div class="content">
-        <h1 class="centered-title">{{title.title}}</h1>
+        <h1 class="centered-title">{{title.name}}</h1>
         <div class="title-general">
-            <img class="poster" width="182" height="268" src="{{poster}}"/>
+            <img class="poster" width="182" height="268" src="{{title.poster_url}}"/>
             <div class="title-description">
                 <div class="title-attributes">
-                    <span>{{air_year}}</span>
+                    <span>{{title.year}}</span>
                     <span class="sep">|</span>
-                    {% set duration = title.get_video().get_duration() %}
-                    {% if duration.seconds >= 3600 %}
-                        <span>{{'{}h {}min'.format(duration.seconds//3600, (duration.seconds//60)%60)}}</span>
-                    {% else %}
-                        <span>{{'{}min'.format(duration.seconds//60)}}</span>
-                    {% end %}
+                    <span>{{title.duration}}</span>
                     <span class="sep">|</span>
-                    <span>{{genre}}</span>
+                    <span>{{', '.join(title.genre)}}</span>
                     <span class="sep">|</span>
                     <svg width="24" height="24">
                         <polygon points="11.96,1.46 9.21,10 0.25,9.97 7.51,15.22 4.72,23.74 11.96,18.46 19.21,23.74 16.41,15.22 23.67,9.97 14.72,10" style="fill:#f3ce13;stroke:black;stroke-width:0;fill-rule:all;" />
                     </svg>
-                    <span class="rating">{{rating}}</span>
+                    <span class="rating">{{title.rating}}</span>
                 </div>
-                <p>{{plot}}</p>
-                <span>Subtitles: {{', '.join([s.label for s in title.get_video().get_subtitles()]) if title.get_video().get_subtitles() else 'None'}}</span>
+                <p>{{title.plot}}</p>
+                {% if video is not None %}
+                    <span>Subtitles: {{', '.join([s.label for s in video.get_subtitles()])}}</span>
+                {% else %}
+                    <span>Subtitles: -</span>
+                {% end %}
+                {% if torrents is not None %}
+                {% for t in torrents %}
+                    <p>{{t.name}} {{t.seeders}} {{t.size}}</p>
+                {% end %}
+                {% end %}
             </div>
             <div>
-                <a class="play-button" href="/play?category={{category}}&id={{title.filename}}">Play</a>
+                {% if video is not None %}
+                    <a class="play-button" href="/play?category={{category}}&{{title.url_params_id}}&video={{video.path}}">Play</a>
+                {% else %}
+                    <a class="play-button" href="/">Download</a>
+                {% end %}
             </div>
         </div>
     </div>

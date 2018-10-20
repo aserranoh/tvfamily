@@ -23,7 +23,6 @@ along with tvfamily; see the file COPYING.  If not, see
 import html.parser
 import json
 import re
-import tornado.gen
 import tornado.httpclient
 import urllib.parse
 
@@ -48,8 +47,9 @@ _SEARCH_TYPES = ['TV Series', 'Short', 'TV Episode', 'Video', 'TV Movie',
 _RE_SEARCH_TYPE = re.compile(r'\(({})\)'.format('|'.join(_SEARCH_TYPES)))
 # Add 'Movie' as search type (in IMDB movies don't have explicit type)
 _SEARCH_TYPES.append('Movie')
-_RE_TITLE = re.compile(
-    r'(?P<title>.*?)\s+\(.*?(?P<air_year>\d{4})(–(?P<end_year>\d{4}|\s*))?\)$')
+_RE_TITLE = re.compile(r'(?P<title>.*?)\s*'
+    r'(\(.*?(?P<air_year>\d{4})(–(?P<end_year>\d{4}|\s*))?\))?$')
+_RE_DURATION = re.compile(r'PT(?P<h>\d+)H(?P<m>\d+)M')
 
 def _parse_title(data):
     '''Return the air and end year of a tv series.'''
@@ -57,7 +57,8 @@ def _parse_title(data):
     m = _RE_TITLE.search(data)
     if m:
         title = m.group('title')
-        air_year = int(m.group('air_year'))
+        if air_year is not None:
+            air_year = int(m.group('air_year'))
         end_year = m.group('end_year')
         if end_year is not None:
             if end_year.strip() != '':
@@ -201,7 +202,14 @@ class TitleParser(html.parser.HTMLParser):
             db = json.loads(data)
             # The description may be missing
             self.attrs['plot'] = db.get('description', 'No description.')
-            self.attrs['genre'] = db['genre']
+            self.attrs['genre'] = db.get('genre', ['Unknown'])
+            self.attrs['duration'] = None
+            try:
+                m = _RE_DURATION.match(db['duration'])
+                if m is not None:
+                    self.attrs['duration'] = '{}h {}m'.format(
+                        m.group('h'), m.group('m'))
+            except KeyError: pass
             # The rating may be missing
             try:
                 self.attrs['rating'] = db['aggregateRating']['ratingValue']
@@ -341,33 +349,30 @@ class IMDBTitle(object):
     def __getitem__(self, attr):
         return self._attrs[attr]
 
-    @tornado.gen.coroutine
-    def fetch(self):
+    async def fetch(self):
         '''Obtain the remaining attributes from the title's main IMDB page.'''
         # Fetch the title page
         url = _IMDB_TITLE_URL.format(self.id)
         http_client = tornado.httpclient.AsyncHTTPClient()
-        response = yield http_client.fetch(url, headers=_HTTP_HEADERS)
+        response = await http_client.fetch(url, headers=_HTTP_HEADERS)
         # Parse the important information
         parser = TitleParser()
         parser.feed(response.body.decode('utf-8'))
         self._attrs.update(parser.attrs)
 
-    @tornado.gen.coroutine
-    def fetch_season(self, season):
+    async def fetch_season(self, season):
         '''Obtain a given season's episodes descriptions.'''
         # Fetch the title page
         url = _IMDB_SEASON_URL.format(self.id, season)
         http_client = tornado.httpclient.AsyncHTTPClient()
-        response = yield http_client.fetch(url, headers=_HTTP_HEADERS)
+        response = await http_client.fetch(url, headers=_HTTP_HEADERS)
         # Parse the important information
         parser = SeasonParser(season)
         parser.feed(response.body.decode('utf-8'))
         self._attrs.update(parser.attrs)
 
 
-@tornado.gen.coroutine
-def search(title, title_types, year=None):
+async def search(title, title_types, year=None):
     '''Search by title in the IMDB site.
     title_type might be one of: 'Movie', 'TV Series', 'Video', 'Short',
     'TV Mini-Series', 'TV Movie', 'TV Episode' or 'Video Game'.
@@ -383,7 +388,7 @@ def search(title, title_types, year=None):
 
     # Fetch the list of titles
     http_client = tornado.httpclient.AsyncHTTPClient()
-    response = yield http_client.fetch(url, headers=_HTTP_HEADERS)
+    response = await http_client.fetch(url, headers=_HTTP_HEADERS)
 
     # Parse the desired information from the result
     parser = SearchParser()

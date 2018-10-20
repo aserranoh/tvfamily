@@ -48,6 +48,14 @@
                     {% end %}
                 </span>
             </div>
+            <div>
+                <span class="form-title-label">3D</span>
+                <span class="form-checkbox-group">
+                    {% for d in torrents_filters[3] %}
+                        <span><input type="checkbox" name="{{d}}" {{'checked' if f[3] is None or d in f[3] else ''}}>{{d}}</span>
+                    {% end %}
+                </span>
+            </div>
             <input class="button form-save-button" type="submit" value="Save">
         </form>
     </div>

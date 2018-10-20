@@ -82,13 +82,16 @@ def process_video(path, filename):
             video_cmd = ['-c:v', 'libx264']
         # Extract the subtitles
         for i, s in enumerate(subtitles):
+            # Ignore dvd_subtitle type
+            if s['codec_name'] == 'dvd_subtitle':
+                continue
             try:
                 label = s['tags']['title']
             except KeyError:
                 try:
                     label = s['tags']['language']
                 except KeyError:
-                    label = 'sub'
+                    label = 'sub{}'.format(i)
             sub_filename = os.path.join(
                 path, '{}_{}.vtt'.format(base, label))
             cmd = ['ffmpeg', '-y', '-v', 'quiet', '-i', abspath, '-map',
@@ -97,8 +100,8 @@ def process_video(path, filename):
             if p.returncode == 0:
                 print('{} -> extracted'.format(sub_filename))
             else:
-                print('error: {}: extracting subtitle'.format(
-                    sub_filename), file=sys.stderr)
+                print('error: {}: extracting subtitle: {}'.format(
+                    sub_filename, p.stdout), file=sys.stderr)
                 return
         # Convert video file
         video_filename = os.path.join(path, '{}.mp4'.format(base))
@@ -139,9 +142,6 @@ def main(videos_root):
                 process_video(root, f)
             elif extension in SUBTITLES_EXTENSIONS:
                 process_subtitle(root, f)
-            else:
-                print('unrecognized file {}'.format(os.path.join(root, f)),
-                    file=sys.stderr)
 
 if __name__ == '__main__':
     main(sys.argv[1])

@@ -24,6 +24,7 @@ import html.parser
 import re
 import tornado.gen
 import tornado.httpclient
+import urllib.parse
 
 import tvfamily.torrent
 
@@ -47,11 +48,11 @@ _RE_SIZE = re.compile(r'Size ([\d.]+.*?[MG]iB)')
 _HTTP_HEADERS = {'Accept-Language': 'en-US'}
 
 
-class TopParser(html.parser.HTMLParser):
+class TorrentsListParser(html.parser.HTMLParser):
     '''Parse the TPB page that contains the top 100 torrents.'''
 
     def __init__(self):
-        super(TopParser, self).__init__()
+        super(TorrentsListParser, self).__init__()
         # True if we are inside a <td> element
         self._in_column = False
         # True if we are in the <a> element that contains the title of the
@@ -142,8 +143,21 @@ def top(category, options):
         for url in urls]
     # Parse the important information
     for c in contents:
-        parser = TopParser()
+        parser = TorrentsListParser()
         parser.feed(c.body.decode('utf-8'))
         torrents.extend(parser.torrents)
     return torrents
+
+@tornado.gen.coroutine
+def search(title, options):
+    '''Search ThePirateBay for a given title.'''
+    http_client = tornado.httpclient.AsyncHTTPClient()
+    query_params = {'q': title, 'video': 'on', 'page': '0', 'orderby': '99'}
+    url = '{}/s/?{}'.format(options['plugins']['thepiratebay']['url'],
+        urllib.parse.urlencode(query_params))
+    contents = yield http_client.fetch(url, headers=_HTTP_HEADERS)
+    # Parse the important information
+    parser = TorrentsListParser()
+    parser.feed(contents.body.decode('utf-8'))
+    return parser.torrents
 

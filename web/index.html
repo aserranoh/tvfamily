@@ -20,7 +20,7 @@
             {% if medias %}
                 {% for m in medias %}
                     <li>
-                        <a href="/title?category={{current}}&id={{m.title.name}}">
+                        <a href="/title?category={{current}}&{{m.url_params_id}}">
                             {% set poster = m.title.poster_url %}
                             <img class="poster" width="182px" height="268px" src="{{poster if poster is not None else '/tvfamily.svg'}}">
                             <div class="title-list-attrs">

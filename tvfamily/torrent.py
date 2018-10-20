@@ -35,7 +35,7 @@ __homepage__ = 'https://github.com/aserranoh/tvfamily'
 class Torrent(object):
     '''Represents a torrent object.'''
 
-    def __init__(self, name, magnet, size, seeders, leechers):
+    def __init__(self, name, magnet=None, size=0, seeders=0, leechers=0):
         self.name = name
         self.magnet = magnet
         self.size = size
