@@ -25,6 +25,8 @@ import tornado.web
 
 import tvfamily.core
 import tvfamily.httpserver
+import tvfamily.webcommon
+import tvfamily.webservice
 
 __script__ = 'tvfamily'
 __author__ = 'Antonio Serrano Hernandez'
@@ -56,39 +58,7 @@ SETTINGS = {'template_path': 'web'}
 class ServerError(Exception): pass
 
 
-class BaseHandler(tornado.web.RequestHandler):
-    '''Base class to iplement a http request handler.'''
-
-    def initialize(self, core=None):
-        '''Pass the core of the application to the handlers.
-
-        Parameters:
-          * core: the core of the tvfamily application.
-        '''
-        self._core = core
-
-class RootHandler(BaseHandler):
-    '''Root page's handler.'''
-
-    def get(self):
-        '''Serve the root page.
-
-        The root page must redirect to the list of media of the first
-        category.
-        '''
-        category = self._core.get_categories()[0]
-        self.redirect('/categories/{}'.format(category.key))
-
-class CategoriesHandler(BaseHandler):
-    '''Index page's handler (list of medias of a category).'''
-
-    async def get(self, category):
-        '''Serve the suggested medias of a given category.'''
-        medias = await self._core.top(category)
-        self.render('index.html', categories=self._core.get_categories(),
-            current=category, medias=medias)
-
-class TitleHandler(BaseHandler):
+class TitleHandler(tvfamily.webcommon.BaseHandler):
     '''Title main page.'''
 
     async def get(self):
@@ -149,7 +119,7 @@ class TitleHandler(BaseHandler):
         self.render('movie.html', category=self.get_query_argument('category'),
             title=title, video=video, torrents=torrents)
 
-class PlayHandler(BaseHandler):
+class PlayHandler(tvfamily.webcommon.BaseHandler):
     '''Handler of the page to play a video.'''
 
     async def get(self):
@@ -162,7 +132,7 @@ class PlayHandler(BaseHandler):
         self.render('playmovie.html', category=category, title=title,
             video=video)
 
-class VideoHandler(BaseHandler):
+class VideoHandler(tvfamily.webcommon.BaseHandler):
     '''Serves a video in chunks.'''
 
     def compute_etag(self):
@@ -227,7 +197,7 @@ class VideoHandler(BaseHandler):
             tornado.httputil._get_content_range(start, end, size))
 
 
-class SubtitlesHandler(BaseHandler):
+class SubtitlesHandler(tvfamily.webcommon.BaseHandler):
     '''Serves a vtt subtitles file.'''
 
     def get(self, filename):
@@ -236,7 +206,7 @@ class SubtitlesHandler(BaseHandler):
             self.write(f.read())
 
 
-class SettingsHandler(BaseHandler):
+class SettingsHandler(tvfamily.webcommon.BaseHandler):
     '''Show the settings page.'''
 
     def get(self):
@@ -246,7 +216,7 @@ class SettingsHandler(BaseHandler):
             settings=self._core.get_settings())
 
 
-class SaveSettingsHandler(BaseHandler):
+class SaveSettingsHandler(tvfamily.webcommon.BaseHandler):
     '''Save the settings.'''
 
     def post(self):
@@ -267,7 +237,7 @@ class SaveSettingsHandler(BaseHandler):
         self.redirect('/')
 
 
-class SearchHandler(BaseHandler):
+class SearchHandler(tvfamily.webcommon.BaseHandler):
     '''Search a title.'''
 
     async def get(self, category):
@@ -288,20 +258,23 @@ class WebServer(tvfamily.httpserver.HTTPServer):
             self._core = tvfamily.core.Core(self.options, self.daemonize)
             d = {'core': self._core}
             handlers = [
-                (r'/', RootHandler, d),
-                (r'/categories/(.+)', CategoriesHandler, d),
+                (r'/', tornado.web.RedirectHandler, {'url': '/index.html'}),
+                (r'/(index.html)', tornado.web.StaticFileHandler,
+                    {'path': 'web'}),
                 (r'/title', TitleHandler, d),
                 (r'/play', PlayHandler, d),
                 (r'/stream', VideoHandler, d),
                 (r'(.*?\.vtt)', SubtitlesHandler),
                 (r'/(styles.css)', tornado.web.StaticFileHandler,
-                    dict(path='web')),
+                    {'path': 'web'}),
                 (r'/(.*?\.svg)', tornado.web.StaticFileHandler,
-                    dict(path='data')),
+                    {'path': 'data'}),
                 (r'/settings', SettingsHandler, d),
                 (r'/save-settings', SaveSettingsHandler, d),
                 (r'/search/(.+)', SearchHandler, d),
                 ]
+            ws = tvfamily.webservice.WebService(self._core)
+            handlers.extend(ws.get_handlers())
             self.add_handlers(handlers)
         except (tvfamily.httpserver.HTTPServerError,
                 tvfamily.core.CoreError) as e:

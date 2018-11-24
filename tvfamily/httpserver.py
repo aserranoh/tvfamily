@@ -20,6 +20,7 @@ along with tvfamily; see the file COPYING.  If not, see
 
 import argparse
 import json
+import logging
 import os
 import random
 import signal
@@ -71,6 +72,7 @@ class HTTPServer(object):
         self._app = tornado.web.Application(**settings)
         # Handle signals
         def signal_handler(signum, frame):
+            logging.info('sinal received, terminating...')
             tornado.ioloop.IOLoop.current().stop()
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)

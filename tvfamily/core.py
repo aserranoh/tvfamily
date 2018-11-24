@@ -20,16 +20,16 @@ along with tvfamily; see the file COPYING.  If not, see
 <http://www.gnu.org/licenses/>.
 '''
 
-import datetime
 import glob
 import grp
 import importlib
+import io
 import json
 import logging
 import os
+import PIL.Image
 import pwd
 import re
-import subprocess
 import sys
 import time
 import tornado.gen
@@ -54,11 +54,11 @@ _RE_KEY = re.compile(r'[^a-zA-Z]+')
 _TVFAMILY_UID = pwd.getpwnam('tvfamily').pw_uid
 _TVFAMILY_GID = grp.getgrnam('tvfamily').gr_gid
 
-# Settings file if the application is launched in non daemon (user) mode
-_USER_SETTINGS_FILE = os.path.join(os.path.expanduser('~'), '.tvfamily.json')
-
-# Settings file if the application is launched in daemon mode
-_SYSTEM_SETTINGS_FILE = '/var/lib/tvfamily/settings.json'
+_DAEMON_DATA_PATH = '/var/lib/tvfamily'
+_USER_DATA_PATH = os.path.join(os.path.expanduser('~'), '.tvfamily')
+# TODO: put the real static path
+#STATIC_PATH = '/usr/share/tvfamily'
+STATIC_PATH = os.path.join(os.path.dirname(sys.argv[0]), '..', 'data')
 
 # Defaults values for the settings
 _SETTINGS_DEFAULTS = {
@@ -82,7 +82,15 @@ class Core(object):
 
     def __init__(self, options, daemon):
         self._options = options
-        self._load_settings(daemon)
+        if daemon:
+            data_path = _DAEMON_DATA_PATH
+        else:
+            data_path = _USER_DATA_PATH
+        # Make sure data_path exists and has the correct permissions
+        self._create_data_path(data_path, daemon)
+        self._options = options
+        self._settings = Settings(data_path, _SETTINGS_DEFAULTS)
+        self._profiles_manager = ProfilesManager(data_path, STATIC_PATH)
         self._build_torrent_engine()
         self._build_titles_db(daemon)
 
@@ -91,16 +99,12 @@ class Core(object):
             os.setgid(_TVFAMILY_GID)
             os.setuid(_TVFAMILY_UID)
 
-    def _load_settings(self, daemon):
-        '''Load the runtime settings.'''
+    def _create_data_path(self, data_path, daemon):
+        '''Create the data_path if it doesn't exist yet.'''
+        if not os.path.isdir(data_path):
+            os.mkdir(data_path)
         if daemon:
-            settings_file = _SYSTEM_SETTINGS_FILE
-            directory = os.path.dirname(settings_file)
-            os.mkdirs(directory, exist_ok=True)
             os.chown(directory, 0, _TVFAMILY_GID)
-        else:
-            settings_file = _USER_SETTINGS_FILE
-        self._settings = Settings(settings_file, _SETTINGS_DEFAULTS)
 
     def _build_torrent_engine(self):
         '''Instantiate the TorrentEngine object.'''
@@ -145,6 +149,28 @@ class Core(object):
                 if daemon:
                     os.chown(category_path, _TVFAMILY_UID, _TVFAMILY_GID)
         return categories
+
+    # Profile functions
+
+    def get_profiles(self):
+        '''Return the list of profiles.'''
+        return self._profiles_manager.get_profiles()
+
+    def get_profile_image(self, name):
+        '''Return the image for the given profile.'''
+        return self._profiles_manager.get_profile_image(name)
+
+    def set_profile_image(self, name, image):
+        '''Set a new profile image for the given profile.'''
+        self._profiles_manager.set_profile_image(name, image)
+
+    def create_profile(self, name):
+        '''Create a new profile.'''
+        self._profiles_manager.create_profile(name)
+
+    def delete_profile(self, name):
+        '''Delete a profile.'''
+        self._profiles_manager.delete_profile(name)
 
     # Runtime settings functions
 
@@ -207,11 +233,13 @@ class Core(object):
 class Settings(object):
     '''Store the runtime settings.'''
 
-    def __init__(self, settings_file, defaults):
-        self._settings_file = settings_file
+    _SETTINGS_FILE = 'settings.json'
+
+    def __init__(self, data_path, defaults):
+        self._settings_file = os.path.join(data_path, self._SETTINGS_FILE)
         # If the settings file doesn't exist, create it with the default values
         try:
-            with open(settings_file, 'r') as f:
+            with open(self._settings_file, 'r') as f:
                 self._settings = json.loads(f.read())
         except IOError:
             self._settings = defaults.copy()
@@ -231,6 +259,116 @@ class Settings(object):
         '''Save the settings into the settings file.'''
         with open(self._settings_file, 'w') as f:
             f.write(json.dumps(self._settings))
+
+
+class ProfilesManager(object):
+    '''Manage the user profiles.'''
+
+    _PROFILES_DIR = 'profiles'
+    _PROFILES_FILE = 'profiles.json'
+    _DEFAULT_PROFILE_IMAGE = 'default.png'
+    _PROFILE_IMAGE_SIZE = (256, 256)
+
+    def __init__(self, data_dir, static_dir):
+        self._profiles_path = os.path.join(data_dir, self._PROFILES_DIR)
+        # Make sure the self._profiles_path exists
+        self._create_profiles_path()
+        self._default_profile_image = os.path.join(
+            static_dir, self._DEFAULT_PROFILE_IMAGE)
+        try:
+            self._load()
+        except IOError:
+            self._profiles = {}
+
+    def _create_profiles_path(self):
+        '''Create the profiles path if it doesn't exist yet.'''
+        if not os.path.isdir(self._profiles_path):
+            os.mkdir(self._profiles_path)
+
+    @property
+    def _profiles_file(self):
+        '''Return the full path of the profiles JSON file.'''
+        return os.path.join(self._profiles_path, self._PROFILES_FILE)
+
+    def _load(self):
+        '''Load the profiles from the file.'''
+        with open(self._profiles_file, 'r') as f:
+            self._profiles = dict((p['name'], UserProfile(**p))
+                for p in json.loads(f.read()))
+
+    def get_profiles(self):
+        '''Return the list of profiles.'''
+        return sorted(self._profiles.values(), key=lambda p: p.name)
+
+    def get_profile_image(self, name):
+        '''Return the image for the given profile.'''
+        if name not in self._profiles:
+            raise KeyError("profile '{}' not found".format(name))
+        image_path = os.path.join(self._profiles_path, name + '.png')
+        try:
+            return open(image_path, 'rb')
+        except IOError:
+            return open(self._default_profile_image, 'rb')
+
+    def set_profile_image(self, name, image):
+        '''Set a new image for the given profile.'''
+        if name not in self._profiles:
+            raise KeyError("profile '{}' not found".format(name))
+        image_path = os.path.join(self._profiles_path, name + '.png')
+        if not image:
+            # Default image selected. Delete previous image, if any
+            try:
+                os.unlink(image_path)
+            except OSError: pass
+        else:
+            # New image, first try to open it with pillow
+            try:
+                img = PIL.Image.open(io.BytesIO(image))
+            except IOError:
+                raise IOError('profile image format unsupported')
+            # Resize it to 256x256
+            img = img.resize(self._PROFILE_IMAGE_SIZE)
+            # Save the new image
+            try:
+                img.save(image_path)
+            except IOError as e:
+                raise IOError('cannot write profile image: {}'.format(e))
+
+    def create_profile(self, name):
+        '''Create a new profile with the given name.'''
+        if name not in self._profiles:
+            self._profiles[name] = UserProfile(name)
+            self._save()
+        else:
+            raise ValueError('a profile with this name already exists')
+
+    def delete_profile(self, name):
+        '''Delete the profile with the given name.'''
+        try:
+            del self._profiles[name]
+            self._save()
+        except KeyError:
+            raise KeyError("profile '{}' not found".format(name))
+
+    def _save(self):
+        '''Save the profiles into the file.'''
+        try:
+            with open(self._profiles_file, 'w') as f:
+                f.write(json.dumps([p.todict()
+                    for p in self._profiles.values()]))
+        except IOError as e:
+            logging.warning('cannot save profiles: {}'.format(e))
+
+
+class UserProfile(object):
+    '''Store information about the user profile.'''
+
+    def __init__(self, name):
+        self.name = name
+
+    def todict(self):
+        '''Return a dictionary with this object's information.'''
+        return {'name': self.name}
 
 
 class Video(object):
@@ -434,6 +572,10 @@ class Title(object):
                 f.write(json.dumps(self._imdb_title._attrs))
         except IOError: pass
 
+    def todict(self):
+        '''Return a dictionary with some of the attributes of this instance.'''
+        return {'title': self.name}
+
 
 class TVSerie(Title):
     '''Represents a TV Serie.'''
@@ -530,6 +672,12 @@ class Episode(object):
         '''Fetch the information for this episode.'''
         await self.title.fetch_season(self.season)
 
+    def todict(self):
+        '''Return a dictionary with some of the attributes of this instance.'''
+        d = self.title.todict()
+        d.update({'season': self.season, 'episode': self.episode})
+        return d
+
 
 class Movie(Title):
     '''Represents a movie.'''
@@ -577,7 +725,7 @@ class TitlesDB(object):
 
     def __init__(self, categories, path):
         self._categories = categories
-        self._dict_categories = dict((c.key, c) for c in categories)
+        self._dict_categories = dict((c.name, c) for c in categories)
         self._root_path = path
         # Database that maps torrents titles to IMDB ids
         self._torrents_to_imdb = None

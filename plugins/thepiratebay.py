@@ -40,9 +40,9 @@ __homepage__ = 'https://github.com/aserranoh/tvfamily'
 
 _TPB_CATEGORIES = {
     # TV Shows: 205, HD TV Shows: 208
-    'tv_series': [205, 208],
+    'TV Series': [205, 208],
     # Movies: 201, Movies DVDR: 202, HD Movies: 207
-    'movies': [201, 207],
+    'Movies': [201, 207],
 }
 _RE_SIZE = re.compile(r'Size ([\d.]+.*?[MG]iB)')
 _HTTP_HEADERS = {'Accept-Language': 'en-US'}
