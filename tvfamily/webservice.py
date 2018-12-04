@@ -43,41 +43,36 @@ class GetProfilesHandler(tvfamily.webcommon.BaseHandler):
     def get(self):
         self.write_json(profiles=[p.name for p in self._core.get_profiles()])
 
-class GetProfileImageHandler(tvfamily.webcommon.BaseHandler):
-    '''Return the image for the given profile.'''
+class GetProfilePictureHandler(tvfamily.webcommon.BaseHandler):
+    '''Return the picture for the given profile.'''
 
     def get(self):
         try:
             name = self.get_query_argument('name')
             self.set_header('Content-Type', 'image/png')
-            img = self._core.get_profile_image(name)
-            self.write(img.read())
-            img.close()
+            pic = self._core.get_profile_picture(name)
+            if pic is not None:
+                self.write(pic.read())
+                pic.close()
+            else:
+                self.write(b'')
         except tornado.web.MissingArgumentError:
             self.write_error(msg="missing 'name' argument")
         except KeyError as e:
             self.write_error(msg=str(e))
 
-class SetProfileImageHandler(tvfamily.webcommon.BaseHandler):
-    '''Set the image for the given profile.'''
-
-    _ACCEPTED_MIME_TYPES = ['image/png', 'image/jpg']
+class SetProfilePictureHandler(tvfamily.webcommon.BaseHandler):
+    '''Set the picture for the given profile.'''
 
     def post(self):
         try:
             name = self.get_query_argument('name')
-            img = self.request.files['file'][0]
-            mime = img['content_type']
-            body = img['body']
-            if body and mime not in self._ACCEPTED_MIME_TYPES:
-                self.write_error(
-                    msg='image format {} not supported'.format(mime))
-            else:
-                try:
-                    self._core.set_profile_image(name, body)
-                    self.write_json(code=0)
-                except (KeyError, IOError) as e:
-                    self.write_error(msg=str(e))
+            pic = self.request.files['file'][0]['body']
+            try:
+                self._core.set_profile_picture(name, pic)
+                self.write_json(code=0)
+            except (KeyError, IOError) as e:
+                self.write_error(msg=str(e))
         except tornado.web.MissingArgumentError:
             self.write_error(msg="missing 'name' argument")
         except KeyError:
@@ -149,8 +144,8 @@ class WebService(object):
         d = {'core': self._core}
         return [
             (r'/api/getprofiles', GetProfilesHandler, d),
-            (r'/api/getprofileimage', GetProfileImageHandler, d),
-            (r'/api/setprofileimage', SetProfileImageHandler, d),
+            (r'/api/getprofilepicture', GetProfilePictureHandler, d),
+            (r'/api/setprofilepicture', SetProfilePictureHandler, d),
             (r'/api/createprofile', CreateProfileHandler, d),
             (r'/api/deleteprofile', DeleteProfileHandler, d),
             (r'/api/getcategories', GetCategoriesHandler, d),

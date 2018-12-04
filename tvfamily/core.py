@@ -156,13 +156,13 @@ class Core(object):
         '''Return the list of profiles.'''
         return self._profiles_manager.get_profiles()
 
-    def get_profile_image(self, name):
-        '''Return the image for the given profile.'''
-        return self._profiles_manager.get_profile_image(name)
+    def get_profile_picture(self, name):
+        '''Return the picture for the given profile.'''
+        return self._profiles_manager.get_profile_picture(name)
 
-    def set_profile_image(self, name, image):
-        '''Set a new profile image for the given profile.'''
-        self._profiles_manager.set_profile_image(name, image)
+    def set_profile_picture(self, name, picture):
+        '''Set a new profile picture for the given profile.'''
+        self._profiles_manager.set_profile_picture(name, picture)
 
     def create_profile(self, name):
         '''Create a new profile.'''
@@ -266,15 +266,12 @@ class ProfilesManager(object):
 
     _PROFILES_DIR = 'profiles'
     _PROFILES_FILE = 'profiles.json'
-    _DEFAULT_PROFILE_IMAGE = 'default.png'
-    _PROFILE_IMAGE_SIZE = (256, 256)
+    _PROFILE_PICTURE_SIZE = (256, 256)
 
     def __init__(self, data_dir, static_dir):
         self._profiles_path = os.path.join(data_dir, self._PROFILES_DIR)
         # Make sure the self._profiles_path exists
         self._create_profiles_path()
-        self._default_profile_image = os.path.join(
-            static_dir, self._DEFAULT_PROFILE_IMAGE)
         try:
             self._load()
         except IOError:
@@ -300,39 +297,39 @@ class ProfilesManager(object):
         '''Return the list of profiles.'''
         return sorted(self._profiles.values(), key=lambda p: p.name)
 
-    def get_profile_image(self, name):
-        '''Return the image for the given profile.'''
+    def get_profile_picture(self, name):
+        '''Return the picture for the given profile.'''
         if name not in self._profiles:
             raise KeyError("profile '{}' not found".format(name))
-        image_path = os.path.join(self._profiles_path, name + '.png')
+        picture_path = os.path.join(self._profiles_path, name + '.png')
         try:
-            return open(image_path, 'rb')
+            return open(picture_path, 'rb')
         except IOError:
-            return open(self._default_profile_image, 'rb')
+            return None
 
-    def set_profile_image(self, name, image):
-        '''Set a new image for the given profile.'''
+    def set_profile_picture(self, name, picture):
+        '''Set a new picture for the given profile.'''
         if name not in self._profiles:
             raise KeyError("profile '{}' not found".format(name))
-        image_path = os.path.join(self._profiles_path, name + '.png')
-        if not image:
-            # Default image selected. Delete previous image, if any
+        picture_path = os.path.join(self._profiles_path, name + '.png')
+        if not picture:
+            # Default picture selected. Delete previous picture, if any
             try:
-                os.unlink(image_path)
+                os.unlink(picture_path)
             except OSError: pass
         else:
-            # New image, first try to open it with pillow
+            # New picture, first try to open it with pillow
             try:
-                img = PIL.Image.open(io.BytesIO(image))
+                pic = PIL.Image.open(io.BytesIO(picture))
             except IOError:
-                raise IOError('profile image format unsupported')
+                raise IOError('profile picture format unsupported')
             # Resize it to 256x256
-            img = img.resize(self._PROFILE_IMAGE_SIZE)
-            # Save the new image
+            pic = pic.resize(self._PROFILE_PICTURE_SIZE)
+            # Save the new picture
             try:
-                img.save(image_path)
+                pic.save(picture_path)
             except IOError as e:
-                raise IOError('cannot write profile image: {}'.format(e))
+                raise IOError('cannot write profile picture: {}'.format(e))
 
     def create_profile(self, name):
         '''Create a new profile with the given name.'''
