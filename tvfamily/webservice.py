@@ -81,13 +81,19 @@ class SetProfilePictureHandler(tvfamily.webcommon.BaseHandler):
 class CreateProfileHandler(tvfamily.webcommon.BaseHandler):
     '''Create a new profile.'''
 
-    def get(self):
+    def post(self):
         try:
             name = self.get_query_argument('name')
-            self._core.create_profile(name)
-            self.write_json(code=0)
+            pic = self.request.files['file'][0]['body']
+            try:
+                self._core.create_profile(name, pic)
+                self.write_json(code=0)
+            except IOError as e:
+                self.write_error(msg=str(e))
         except tornado.web.MissingArgumentError:
             self.write_error(msg="missing 'name' argument")
+        except KeyError as e:
+            self.write_error(msg='malformed request')
         except ValueError as e:
             self.write_error(msg=str(e))
 

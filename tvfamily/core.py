@@ -164,9 +164,9 @@ class Core(object):
         '''Set a new profile picture for the given profile.'''
         self._profiles_manager.set_profile_picture(name, picture)
 
-    def create_profile(self, name):
+    def create_profile(self, name, picture):
         '''Create a new profile.'''
-        self._profiles_manager.create_profile(name)
+        self._profiles_manager.create_profile(name, picture)
 
     def delete_profile(self, name):
         '''Delete a profile.'''
@@ -311,37 +311,50 @@ class ProfilesManager(object):
         '''Set a new picture for the given profile.'''
         if name not in self._profiles:
             raise KeyError("profile '{}' not found".format(name))
-        picture_path = os.path.join(self._profiles_path, name + '.png')
         if not picture:
             # Default picture selected. Delete previous picture, if any
             try:
+                picture_path = os.path.join(self._profiles_path, name + '.png')
                 os.unlink(picture_path)
             except OSError: pass
         else:
-            # New picture, first try to open it with pillow
-            try:
-                pic = PIL.Image.open(io.BytesIO(picture))
-            except IOError:
-                raise IOError('profile picture format unsupported')
-            # Resize it to 256x256
-            pic = pic.resize(self._PROFILE_PICTURE_SIZE)
-            # Save the new picture
-            try:
-                pic.save(picture_path)
-            except IOError as e:
-                raise IOError('cannot write profile picture: {}'.format(e))
+            self._save_profile_picture(name, picture)
 
-    def create_profile(self, name):
+    def create_profile(self, name, picture):
         '''Create a new profile with the given name.'''
         if name not in self._profiles:
+            if picture != b'':
+                self._save_profile_picture(name, picture)
             self._profiles[name] = UserProfile(name)
             self._save()
         else:
             raise ValueError('a profile with this name already exists')
 
+    def _save_profile_picture(self, name, picture):
+        '''Save a picture to be used as a profile picture.'''
+        # First try to open it with pillow
+        try:
+            pic = PIL.Image.open(io.BytesIO(picture))
+        except IOError:
+            raise IOError('profile picture format unsupported')
+        # Resize it to 256x256
+        pic = pic.resize(self._PROFILE_PICTURE_SIZE)
+        # Save the new picture
+        try:
+            picture_path = os.path.join(self._profiles_path, name + '.png')
+            pic.save(picture_path)
+        except IOError as e:
+            raise IOError('cannot write profile picture: {}'.format(e))
+
     def delete_profile(self, name):
         '''Delete the profile with the given name.'''
         try:
+            # Delete the profile picture if any
+            picture_path = os.path.join(self._profiles_path, name + '.png')
+            try:
+                os.unlink(picture_path)
+            except OSError:
+                pass
             del self._profiles[name]
             self._save()
         except KeyError:

@@ -35,7 +35,7 @@ class ProfilesTestCase(unittest.TestCase):
             tvfamilyapi.ServiceError, server.create_profile, 'fistro')
 
         # Try a raw request without the name argument
-        r = requests.get('{}/api/createprofile'.format(SERVER_ADDRESS))
+        r = requests.post('{}/api/createprofile'.format(SERVER_ADDRESS))
         resp = r.json()
         self.assertEqual(resp['code'], 1)
         self.assertEqual(resp['error'], "missing 'name' argument")
@@ -122,6 +122,23 @@ class ProfilesTestCase(unittest.TestCase):
         server.delete_profile('fistro')
         profiles_third = server.get_profiles()
         self.assertEqual(profiles_third, [])
+
+        # Create a profile with an image
+        server.create_profile('fistro', TESTPIC)
+        new_pic_hash = self._checksum(server.get_profile_picture('fistro'))
+        self.assertEqual(new_pic_hash, calculated_pic_hash)
+        server.delete_profile('fistro')
+
+        # Create a profile with a wrong image
+        self.assertRaises(tvfamilyapi.ServiceError, server.create_profile,
+            'fistro', sys.argv[0])
+
+        # Try a raw request without the file
+        r = requests.post('{}/api/createprofile'.format(SERVER_ADDRESS),
+            params={'name': 'fistro'}, files={})
+        resp = r.json()
+        self.assertEqual(resp['code'], 1)
+        self.assertEqual(resp['error'], "malformed request")
 
         # Try a raw request without the name argument
         r = requests.get('{}/api/deleteprofile'.format(SERVER_ADDRESS))
