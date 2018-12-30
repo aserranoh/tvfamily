@@ -12,6 +12,9 @@ import unittest
 SERVER_ADDRESS = 'http://localhost:8888'
 TESTDIR = os.path.dirname(sys.argv[0])
 TESTPIC = os.path.join(TESTDIR, 'profile.png')
+ROOTDIR = os.path.join(TESTDIR, '..')
+VIDEOS_PATH = os.path.join(ROOTDIR, 'videos')
+IMDB_CACHE_FILE = os.path.join(VIDEOS_PATH, 'torrents2imdb.json')
 PROFILES_PATH = os.path.join(os.path.expanduser('~'), '.tvfamily', 'profiles')
 PROFILES_FILE = os.path.join(PROFILES_PATH, 'profiles.json')
 
@@ -149,6 +152,42 @@ class ProfilesTestCase(unittest.TestCase):
         # Delete a non existing profile
         self.assertRaises(
             tvfamilyapi.ServiceError, server.delete_profile, 'fistro')
+
+    def test_categories(self):
+        '''Test the function to get the list of categories.'''
+        l = server.get_categories()
+        self.assertTrue(len(l) > 0)
+
+    def test_top(self):
+        '''Test the function to get the top torrents of a category.'''
+        # Create a profile
+        server.create_profile('fistro')
+
+        # Make sure there's no IMDB search cache
+        os.unlink(IMDB_CACHE_FILE)
+
+        # Get the top movies
+        medias = server.get_top('fistro', 'Movies')
+        self.assertTrue(len(medias) > 0)
+        for m in medias:
+            (m.title, m.poster_url, m.rating)
+
+        # Get the top tv series
+        medias = server.get_top('fistro', 'TV Series')
+        self.assertTrue(len(medias) > 0)
+        for m in medias:
+            (m.title, m.poster_url, m.rating, m.season, m.episode)
+
+        # Get the top movies again to retrieve the IMDB id from the cache
+        medias = server.get_top('fistro', 'Movies')
+
+        # Wrong profile
+        self.assertRaises(
+            tvfamilyapi.ServiceError, server.get_top, 'fistril', 'Movies')
+
+        # Wrong category
+        # Error loading plugin
+        # Test filters
 
     def _checksum_file(self, filename):
         with open(filename, 'rb') as f:

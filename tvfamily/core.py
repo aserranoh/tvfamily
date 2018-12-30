@@ -60,7 +60,7 @@ _USER_DATA_PATH = os.path.join(os.path.expanduser('~'), '.tvfamily')
 #STATIC_PATH = '/usr/share/tvfamily'
 STATIC_PATH = os.path.join(os.path.dirname(sys.argv[0]), '..', 'data')
 
-# Defaults values for the settings
+# Defaults values for the user settings
 _SETTINGS_DEFAULTS = {
     # Expiracy for the IMDB cached data, in seconds (1 day)
     'imdb_cache_expiracy': 24 * 3600,
@@ -89,10 +89,9 @@ class Core(object):
         # Make sure data_path exists and has the correct permissions
         self._create_data_path(data_path, daemon)
         self._options = options
-        self._settings = Settings(data_path, _SETTINGS_DEFAULTS)
         self._profiles_manager = ProfilesManager(data_path, STATIC_PATH)
-        self._build_torrent_engine()
         self._build_titles_db(daemon)
+        self._torrent_engine = TorrentEngine(options)
 
         # Switch to user tvfamily for security reasons
         if daemon:
@@ -106,25 +105,13 @@ class Core(object):
         if daemon:
             os.chown(directory, 0, _TVFAMILY_GID)
 
-    def _build_torrent_engine(self):
-        '''Instantiate the TorrentEngine object.'''
-        try:
-            # Get the path to the plugins directory
-            plugins_path = self._options['plugins']['path']
-            self._torrent_engine = TorrentEngine(plugins_path)
-        except KeyError:
-            # No plugins.path defined
-            msg = 'no plugins.path defined'
-            logging.error(msg)
-            raise CoreError(msg)
-
     def _build_titles_db(self, daemon):
         '''Instantiate the TitlesDB object.'''
         try:
             path = self._options['videos']['path']
             # Define the lists of categories
             categories = self._define_categories(path, daemon)
-            self._titles_db = TitlesDB(categories=categories, path=path)
+            self._titles_db = TitlesDB(categories, path)
         except KeyError:
             # No videos.path defined
             msg = 'no videos.path defined'
@@ -133,19 +120,13 @@ class Core(object):
 
     def _define_categories(self, path, daemon):
         '''Define the list of caterogies.'''
-        categories = [
-            Category('TV Series', TVSerie, ['TV Series', 'TV Mini-Series'],
-                path, self._settings),
-            Category('Movies', Movie, ['Movie'], path, self._settings),
-            Category('Cartoon', TVSerie, ['TV Series', 'TV Mini-Series'],
-                path, self._settings),
-        ]
+        categories = [Category(*c, path)
+            for c in [('TV Series', TVSerie, ['TV Series', 'TV Mini-Series']),
+                ('Movies', Movie, ['Movie'])]]
         # Create the directories for the categories if they don't exist
-        path = self._options['videos']['path']
         for c in categories:
-            category_path = os.path.join(path, c.key)
-            if not os.path.exists(category_path):
-                os.mkdir(category_path, mode=0o755)
+            if not os.path.exists(c.path):
+                os.mkdir(c.path, mode=0o755)
                 if daemon:
                     os.chown(category_path, _TVFAMILY_UID, _TVFAMILY_GID)
         return categories
@@ -172,34 +153,29 @@ class Core(object):
         '''Delete a profile.'''
         self._profiles_manager.delete_profile(name)
 
-    # Runtime settings functions
-
-    def get_settings(self):
-        '''Return the runtime settings.'''
-        return self._settings
-
-    def update_settings(self, settings):
-        '''Set new values for the settings.'''
-        self._settings.update(settings)
-
-    # Functions to navigate through the titles
+    # Functions to list the medias
 
     def get_categories(self):
         '''Return the list of videos categories.'''
-        return self._titles_db.get_categories()
+        return self._titles_db.get_categories_names()
+
+    async def top(self, profile, category):
+        '''Return the top list of medias of a given category.'''
+        # Get the user settings
+        settings = self._profiles_manager[profile].settings
+        filters = settings['torrents_filters']
+        cache_expiracy = settings['imdb_cache_expiracy']
+        # Get the top list of torrents
+        torrents = await self._torrent_engine.top(category, filters)
+        medias = await self._titles_db.get_medias_from_torrents(
+            torrents, category, cache_expiracy)
+        return medias
+
+    # Functions to navigate through the titles
 
     async def get_title(self, category, imdb_id):
         '''Return the title within category with the given imdb_id.'''
         return (await self._titles_db.get_title(category, imdb_id))
-
-    async def top(self, category):
-        '''Return the top list of medias of a given category.'''
-        # First, get the top list of torrents
-        torrents = await self._torrent_engine.top(
-            category, self._options, self._settings['torrents_filters'])
-        medias = await self._titles_db.get_medias_from_torrents(
-            torrents, category)
-        return medias
 
     async def search(self, title, category):
         '''Search titles by name in IMDB.'''
@@ -230,37 +206,6 @@ class Core(object):
         return Video(video_file)
 
 
-class Settings(object):
-    '''Store the runtime settings.'''
-
-    _SETTINGS_FILE = 'settings.json'
-
-    def __init__(self, data_path, defaults):
-        self._settings_file = os.path.join(data_path, self._SETTINGS_FILE)
-        # If the settings file doesn't exist, create it with the default values
-        try:
-            with open(self._settings_file, 'r') as f:
-                self._settings = json.loads(f.read())
-        except IOError:
-            self._settings = defaults.copy()
-            self._save()
-
-    def __getitem__(self, setting):
-        '''Get a setting.'''
-        return self._settings[setting]
-
-    def update(self, settings):
-        '''Update the settings.'''
-        self._settings.update(settings)
-        # Update the settings file
-        self._save()
-
-    def _save(self):
-        '''Save the settings into the settings file.'''
-        with open(self._settings_file, 'w') as f:
-            f.write(json.dumps(self._settings))
-
-
 class ProfilesManager(object):
     '''Manage the user profiles.'''
 
@@ -276,6 +221,13 @@ class ProfilesManager(object):
             self._load()
         except IOError:
             self._profiles = {}
+
+    def __getitem__(self, name):
+        '''Return a profile given its name.'''
+        try:
+            return self._profiles[name]
+        except KeyError:
+            raise KeyError("profile '{}' not found".format(name))
 
     def _create_profiles_path(self):
         '''Create the profiles path if it doesn't exist yet.'''
@@ -373,12 +325,183 @@ class ProfilesManager(object):
 class UserProfile(object):
     '''Store information about the user profile.'''
 
-    def __init__(self, name):
+    def __init__(self, name, settings=_SETTINGS_DEFAULTS):
         self.name = name
+        self.settings = settings
 
     def todict(self):
         '''Return a dictionary with this object's information.'''
-        return {'name': self.name}
+        return {'name': self.name, 'settings': self.settings}
+
+
+class Category(object):
+    '''Represents a title category.'''
+
+    def __init__(self, name, title_class, imdb_type, path):
+        # The name of the category (the value shown in the web site)
+        self.name = name
+        # The subclass of the titles of this category (to instantiate them)
+        self.title_class = title_class
+        # IMDB types associated with this category (to perform searches in
+        # IMDB).
+        self.imdb_type = imdb_type
+        # Root path to the categories directory tree
+        self.root_path = path
+
+    @property
+    def path(self):
+        return os.path.join(
+            self.root_path, _RE_KEY.sub('_', self.name.lower()))
+
+    def get_title(self, imdb_title):
+        '''Return an instance of a title in this category.'''
+        return self.title_class(self, imdb_title)
+
+    def is_valid(self, torrent):
+        '''Return True if the torrent is valid for this category of videos.'''
+        return self.title_class.is_valid(torrent)
+
+
+class TitlesDB(object):
+    '''Titles database.'''
+
+    # Name of the file that holds the mapping between torrent titles and IMDB
+    # ids
+    _IMDB_ID_CACHE = 'torrents2imdb.json'
+
+    def __init__(self, categories, path):
+        self._categories = dict((c.name, c) for c in categories)
+        self._root_path = path
+        # Database that maps torrents titles to IMDB ids
+        self._torrents_to_imdb = None
+
+    @property
+    def imdb_cache_file(self):
+        '''Return the IMDB cache file.'''
+        return os.path.join(self._root_path, self._IMDB_ID_CACHE)
+
+    def get_categories_names(self):
+        '''Return a list with the names of the categories.'''
+        return sorted(self._categories.keys())
+
+    async def get_medias_from_torrents(
+            self, torrents, category, cache_expiracy):
+        '''Return a list of medias from a list of torrents.'''
+        # Preliminary filter of torrents (for example, complete seasons)
+        category = self._categories[category]
+        torrents = [t for t in torrents if category.is_valid(t)]
+        # Get the list of titles
+        titles = await tornado.gen.multi(
+            [self._get_title_from_torrent(t, category) for t in torrents])
+        # Discard the titles not found
+        titles = [t for t in titles if t is not None]
+        # Fetch the IMDB data from the title
+        await tornado.gen.multi([t.fetch(cache_expiracy) for t in titles])
+        # Get the media corresponding to each title
+        medias = [title.get_media(torrent)
+            for title, torrent in zip(titles, torrents)]
+        # Remove repeated medias (keep its order)
+        set_medias = set()
+        final_medias = []
+        for m in medias:
+            if m not in set_medias:
+                final_medias.append(m)
+                set_medias.add(m)
+        # Fetch the media IMDB data (in case of, for example, episodes,
+        # fetch its individual information)
+        await tornado.gen.multi([m.fetch(cache_expiracy)
+            for m in final_medias])
+        return final_medias
+
+    async def _get_title_from_torrent(self, torrent, category):
+        '''Retrieves a title from the torrent name.'''
+        try:
+            imdb_id = self._get_imdb_id_from_torrent(torrent)
+            # ID found, build the Title instance
+            title = category.get_title(imdb_id)
+        except KeyError:
+            # ID not found in the cache, perform a search in the imdb site
+            results = await tvfamily.imdb.search(torrent.name_info['title'],
+                category.imdb_type, torrent.name_info.get('year'))
+            if len(results):
+                title = category.get_title(results[0])
+                self._set_imdb_id_from_torrent(torrent, results[0].id)
+            else:
+                title = None
+                year = torrent.name_info.get('year')
+                logging.warning("title not found in IMDB: '{} {}'".format(
+                    torrent.name_info['title'],
+                    '({})'.format(year) if year is not None else ''))
+        return title
+
+    def _load_torrents_to_imdb(self):
+        '''Load the database that maps torrent titles to imdb ids from its
+        file.
+        '''
+        try:
+            with open(self.imdb_cache_file, 'r') as f:
+                self._torrents_to_imdb = json.loads(f.read())
+        except IOError:
+            self._torrents_to_imdb = {}
+
+    def _save_torrents_to_imdb(self):
+        '''Write the torrents to imdb ids mapping to its file.'''
+        with open(self.imdb_cache_file, 'w') as f:
+            f.write(json.dumps(self._torrents_to_imdb))
+
+    def _get_imdb_id_from_torrent(self, torrent):
+        '''Return an IMDB id from a torrent name.'''
+        # Load the database if necessary
+        if self._torrents_to_imdb is None:
+            self._load_torrents_to_imdb()
+        # Get the key from the torrent name
+        k = self._get_torrent_key(torrent)
+        # A KeyError may be raisen if the key for this torrent is not yet
+        # in the dictionary
+        return self._torrents_to_imdb[k]
+
+    def _get_torrent_key(self, torrent):
+        '''Return a key to be used in the torrents_to_imdb database.'''
+        k = torrent.name_info['title'].lower()
+        try:
+            k = '{}.{}'.format(k, str(torrent.name_info['year']))
+        except KeyError: pass
+        return k
+
+    def _set_imdb_id_from_torrent(self, torrent, imdb_id):
+        '''Set a pair torrent-IMDB id.'''
+        k = self._get_torrent_key(torrent)
+        self._torrents_to_imdb[k] = imdb_id
+        self._save_torrents_to_imdb()
+
+    async def search(self, title, category):
+        '''Search titles by name in IMDB.'''
+        category = self._categories[category]
+        results = await tvfamily.imdb.search(title, category.imdb_type)
+        titles = [category.get_title(x) for x in results]
+        await tornado.gen.multi([t.fetch() for t in titles])
+        return titles
+
+    async def get_title(self, category, imdb_id):
+        '''Return a title given its category and imdb_id.'''
+        category = self._categories[category]
+        t = category.get_title(imdb_id)
+        await t.fetch()
+        return t
+
+    async def get_video_from_media(self, media):
+        '''Return the video in the local machine, if any, for this media.'''
+        # Get the list of all the videos that may correspond to this media
+        paths = media.get_all_videos_paths()
+        for p in paths:
+            # For each path, get its IMDB title
+            torrent = tvfamily.torrent.Torrent(os.path.basename(p))
+            t = await self._get_title_from_torrent(
+                torrent, media.title.category)
+            if (t is not None
+                    and t._imdb_title.id == media.title._imdb_title.id):
+                return media.get_video(p)
+        return None
 
 
 class Video(object):
@@ -455,51 +578,16 @@ class Subtitle(object):
             self.path)[prefix_len + 1:].rpartition('.')[0]
 
 
-class Category(object):
-    '''Represents a title category.'''
-
-    def __init__(self, name, title_class, imdb_type, path, settings):
-        # The name of the category (the value shown in the web site)
-        self.name = name
-        # The subclass of the titles of this category (to instantiate them)
-        self.title_class = title_class
-        # IMDB types associated with this category (to perform searches in
-        # IMDB).
-        self.imdb_type = imdb_type
-        # Root path where all the videos and metadata are stored
-        self.root_path = path
-        # Global settings
-        self.settings = settings
-        # Machine-form version of the name of this category, used for directory
-        # paths and urls.
-        self.key = _RE_KEY.sub('_', name.lower())
-
-    @property
-    def path(self):
-        return os.path.join(self.root_path, self.key)
-
-    def get_title(self, imdb_title):
-        '''Return an instance of a title in this category.'''
-        cache_expiracy = self.settings['imdb_cache_expiracy']
-        return self.title_class(self, imdb_title, cache_expiracy)
-
-    def is_valid(self, torrent):
-        '''Return True if the torrent is valid for this category of videos.'''
-        return self.title_class.is_valid(torrent)
-
-
 class Title(object):
     '''Base class for every type of media (movies, tv series, ...).'''
 
-    def __init__(self, category, imdb_title, cache_expiracy=0):
+    def __init__(self, category, imdb_title):
         self.category = category
         # A representation of the title in the IMDB database
         if isinstance(imdb_title, str):
             self._imdb_title = tvfamily.imdb.IMDBTitle(imdb_title)
         else:
             self._imdb_title = imdb_title
-        # Value of expiracy of the cached IMDB data
-        self._cache_expiracy = cache_expiracy
         # Load the cached IMDB data if present
         try:
             with open(self._cached_file, 'r') as f:
@@ -549,11 +637,11 @@ class Title(object):
     def year(self):
         return self._imdb_title['air_year']
 
-    async def fetch(self):
+    async def fetch(self, cache_expiracy):
         '''Fetch the attributes from IMDB.'''
         # Check the cache
         try:
-            self.check_cache(self._imdb_title._attrs)
+            self.check_cache(self._imdb_title._attrs, cache_expiracy)
         except (ValueError, KeyError):
             # The IMDB data must be fetched
             await self._imdb_title.fetch()
@@ -562,17 +650,17 @@ class Title(object):
             # Save the IMDB data to the file
             self.save_imdb_data()
 
-    def check_cache(self, element):
+    def check_cache(self, element, cache_expiracy):
         '''Check if the database cache has expired.
         Raises KeyError if the timestamp cannot be found in the database or
         ValueError if the cache has expired.
         '''
         # If self._cache_expiracy is < 0, the cache never expires
-        if self._cache_expiracy == 0:
+        if cache_expiracy == 0:
             # Always fetch
             raise ValueError()
-        elif self._cache_expiracy > 0:
-            if time.time() - element['timestamp'] > self._cache_expiracy:
+        elif cache_expiracy > 0:
+            if time.time() - element['timestamp'] > cache_expiracy:
                 raise ValueError()
 
     def save_imdb_data(self):
@@ -584,7 +672,8 @@ class Title(object):
 
     def todict(self):
         '''Return a dictionary with some of the attributes of this instance.'''
-        return {'title': self.name}
+        return {'title': self.name, 'poster_url': self.poster_url,
+            'rating': self.rating}
 
 
 class TVSerie(Title):
@@ -611,11 +700,12 @@ class TVSerie(Title):
         episode = torrent.name_info['episode'] 
         return Episode(self, season, episode)
 
-    async def fetch_season(self, season):
+    async def fetch_season(self, season, cache_expiracy):
         '''Fetch the attributes of a season from IMDB.'''
         # Check the cache
         try:
-            self.check_cache(self._imdb_title['seasons'][str(season)])
+            self.check_cache(
+                self._imdb_title['seasons'][str(season)], cache_expiracy)
         except (ValueError, KeyError):
             # The IMDB data must be fetched
             await self._imdb_title.fetch_season(season)
@@ -678,9 +768,9 @@ class Episode(object):
             rating = None
         return rating
 
-    async def fetch(self):
+    async def fetch(self, cache_expiracy):
         '''Fetch the information for this episode.'''
-        await self.title.fetch_season(self.season)
+        await self.title.fetch_season(self.season, cache_expiracy)
 
     def todict(self):
         '''Return a dictionary with some of the attributes of this instance.'''
@@ -726,145 +816,6 @@ class Movie(Title):
         return Video(path)
 
 
-class TitlesDB(object):
-    '''Titles database.'''
-
-    # Name of the file that holds the mapping between torrent titles and IMDB
-    # ids
-    _IMDB_ID_CACHE = 'torrents2imdb.json'
-
-    def __init__(self, categories, path):
-        self._categories = categories
-        self._dict_categories = dict((c.name, c) for c in categories)
-        self._root_path = path
-        # Database that maps torrents titles to IMDB ids
-        self._torrents_to_imdb = None
-
-    def get_categories(self):
-        '''Return the list of categories.'''
-        return self._categories
-
-    async def get_medias_from_torrents(self, torrents, category):
-        '''Return a list of medias from a list of torrents.'''
-        # Preliminary filter of torrents (for example, complete seasons)
-        category = self._dict_categories[category]
-        torrents = [t for t in torrents if category.is_valid(t)]
-        # Get the list of titles
-        titles = await tornado.gen.multi(
-            [self._get_title_from_torrent(t, category) for t in torrents])
-        # Discard the titles not found
-        titles = [t for t in titles if t is not None]
-        # Fetch the IMDB data from the title
-        await tornado.gen.multi([t.fetch() for t in titles])
-        # Get the media corresponding to each title
-        medias = [title.get_media(torrent)
-            for title, torrent in zip(titles, torrents)]
-        # Remove repeated medias (keep its order)
-        set_medias = set()
-        final_medias = []
-        for m in medias:
-            if m not in set_medias:
-                final_medias.append(m)
-                set_medias.add(m)
-        # Fetch the media IMDB data (in case of, for example, episodes,
-        # fetch its individual information)
-        await tornado.gen.multi([m.fetch() for m in final_medias])
-        return final_medias
-
-    async def _get_title_from_torrent(self, torrent, category):
-        '''Retrieves a title from the torrent name.'''
-        # Search for the IMDB id in the cache
-        try:
-            imdb_id = self._get_imdb_id_from_torrent(torrent)
-            # ID found, build the Title instance
-            title = category.get_title(imdb_id)
-        except KeyError:
-            # ID not found in the cache, perform a search in the imdb site
-            results = await tvfamily.imdb.search(torrent.name_info['title'],
-                category.imdb_type, torrent.name_info.get('year'))
-            if len(results):
-                title = category.get_title(results[0])
-                self._set_imdb_id_from_torrent(torrent, results[0].id)
-            else:
-                title = None
-                year = torrent.name_info.get('year')
-                logging.warning("title not found in IMDB: '{} {}'".format(
-                    torrent.name_info['title'],
-                    '({})'.format(year) if year is not None else ''))
-        return title
-
-    def _load_torrents_to_imdb(self):
-        '''Load the database that maps torrent titles to imdb ids from its
-        file.
-        '''
-        cache_file = os.path.join(self._root_path, self._IMDB_ID_CACHE)
-        try:
-            with open(cache_file, 'r') as f:
-                self._torrents_to_imdb = json.loads(f.read())
-        except IOError:
-            self._torrents_to_imdb = {}
-
-    def _save_torrents_to_imdb(self):
-        '''Write the torrents to imdb ids mapping to its file.'''
-        cache_file = os.path.join(self._root_path, self._IMDB_ID_CACHE)
-        with open(cache_file, 'w') as f:
-            f.write(json.dumps(self._torrents_to_imdb))
-
-    def _get_imdb_id_from_torrent(self, torrent):
-        '''Return an IMDB id from a torrent name.'''
-        # Load the database if necessary
-        if self._torrents_to_imdb is None:
-            self._load_torrents_to_imdb()
-        # Get the key from the torrent name
-        k = self._get_torrent_key(torrent)
-        # A KeyError may be raisen if the key for this torrent is not yet
-        # in the dictionary
-        return self._torrents_to_imdb[k]
-
-    def _get_torrent_key(self, torrent):
-        '''Return a key to be used in the torrents_to_imdb database.'''
-        k = torrent.name_info['title'].lower()
-        try:
-            k = '{}.{}'.format(k, str(torrent.name_info['year']))
-        except KeyError: pass
-        return k
-
-    def _set_imdb_id_from_torrent(self, torrent, imdb_id):
-        '''Set a pair torrent-IMDB id.'''
-        k = self._get_torrent_key(torrent)
-        self._torrents_to_imdb[k] = imdb_id
-        self._save_torrents_to_imdb()
-
-    async def search(self, title, category):
-        '''Search titles by name in IMDB.'''
-        category = self._dict_categories[category]
-        results = await tvfamily.imdb.search(title, category.imdb_type)
-        titles = [category.get_title(x) for x in results]
-        await tornado.gen.multi([t.fetch() for t in titles])
-        return titles
-
-    async def get_title(self, category, imdb_id):
-        '''Return a title given its category and imdb_id.'''
-        category = self._dict_categories[category]
-        t = category.get_title(imdb_id)
-        await t.fetch()
-        return t
-
-    async def get_video_from_media(self, media):
-        '''Return the video in the local machine, if any, for this media.'''
-        # Get the list of all the videos that may correspond to this media
-        paths = media.get_all_videos_paths()
-        for p in paths:
-            # For each path, get its IMDB title
-            torrent = tvfamily.torrent.Torrent(os.path.basename(p))
-            t = await self._get_title_from_torrent(
-                torrent, media.title.category)
-            if (t is not None
-                    and t._imdb_title.id == media.title._imdb_title.id):
-                return media.get_video(p)
-        return None
-
-
 class TorrentEngine(object):
     '''Manages the plugins that interface with the torrents sites.
     Interface with the torrents sites (via the different plugins).
@@ -901,44 +852,44 @@ class TorrentEngine(object):
     _FILTER_CODEC = dict(zip(_CODEC_VALUES, _RE_CODEC))
     _FILTER_RESOLUTION = dict(zip(_RESOLUTION_VALUES, _RE_RESOLUTION))
 
-    def __init__(self, plugins_path):
+    def __init__(self, options):
         # Path to the plugins files
-        self._plugins_path = plugins_path
+        self._plugins_path = options['plugins']['path']
         # List of plugins (modules) sorted by name
         self._plugins = []
+        # Global options
+        self._options = options
 
-    async def top(self, category, options, filter=None):
+    async def top(self, category, filters):
         '''For each plugin call its top operation. Join all the results lists
         in a single one and then sort it by number of seeders.
-        filter is a tuple ([qualities], [codecs], [resolutions], 3D) with the
-        accepted values for quality, codec, resolution and 3D. A None in place
-        of one of the four elements means that all values are accepted.
         '''
         self._reload_plugins()
         results = await tornado.gen.multi(
-            [self._plugin_method_wrapper(p.top, category, options)
+            [self._plugin_method_wrapper(p.top, category, self._options)
             for p in self._plugins])
         torrents = []
         for r in results:
             if r is not None:
-                torrents.extend(self._filter(r, filter))
+                torrents.extend(self._filter(r, filters))
         torrents.sort(key=lambda x: x.seeders, reverse=True)
         return torrents
 
-    def _filter(self, torrents, filter):
+    def _filter(self, torrents, filters):
         '''Filter a list of torrents according to its values of quality, codec,
         resolution and 3D.
         '''
-        if filter is None:
+        if filters is None:
             l = torrents
         else:
+            quality, codec, resolution, _3d = filters
             l = self._filter_from_attr(
-                torrents, filter[0], 'quality', self._FILTER_QUALITY)
-            l = self._filter_from_attr(l, filter[1], 'codec', self._FILTER_CODEC)
+                torrents, quality, 'quality', self._FILTER_QUALITY)
+            l = self._filter_from_attr(l, codec, 'codec', self._FILTER_CODEC)
             l = self._filter_from_attr(
-                l, filter[2], 'resolution', self._FILTER_RESOLUTION)
-            l = [t for t in l if filter[3] is None
-                or not t.name_info.get('3d', False) or '3D' in filter[3]]
+                l, resolution, 'resolution', self._FILTER_RESOLUTION)
+            l = [t for t in l if _3d is None
+                or not t.name_info.get('3d', False) or '3D' in _3d]
         return l
 
     def _filter_from_attr(self, torrents, filter, attr, dictionary):
@@ -956,38 +907,46 @@ class TorrentEngine(object):
         return l
 
     def _reload_plugins(self):
-        '''Called before each operation. Load new modules in self._plugins_path
+        '''Called before each operation. Load new modules in plugins_path
         and unload the removed ones.
         '''
-        plugins = []
-        # List the current plugins in the directory and sort it by name
-        # Return if the list of plugins cannot be read
         try:
-            plugins_files = sorted([x for x in os.listdir(self._plugins_path)
+            plugins = []
+            # Get the plugins path
+            plugins_path = self._options['plugins']['path']
+            # List the current plugins in the directory and sort it by name
+            # Return if the list of plugins cannot be read
+            plugins_files = sorted([x for x in os.listdir(plugins_path)
                 if x.endswith('.py') and not x.startswith('~')])
-        except IOError:
-            return
-        plugins_names = [x.__name__ for x in self._plugins]
-        # Add a sentinel to the current plugins names list
-        plugins_names.append('~')
-        i, j = 0, 0
-        while i < len(plugins_files):
-            new_plugin_name = plugins_files[i].rsplit('.', 1)[0]
-            if new_plugin_name == plugins_names[j]:
-                # This plugin is already loaded
-                plugins.append(self._plugins[j])
-                i, j = i + 1, j + 1
-            elif new_plugin_name < plugins_names[j]:
-                # This plugin is new, load it
-                spec = importlib.util.spec_from_file_location(new_plugin_name,
-                    os.path.join(self._plugins_path, plugins_files[i]))
-                m = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(m)
-                plugins.append(m)
-                i += 1
-            else:
-                # A plugin not used anymore
-                j += 1
+            plugins_names = [x.__name__ for x in self._plugins]
+            # Add a sentinel to the current plugins names list
+            plugins_names.append('~')
+            i, j = 0, 0
+            while i < len(plugins_files):
+                new_plugin_name = plugins_files[i].rsplit('.', 1)[0]
+                if new_plugin_name == plugins_names[j]:
+                    # This plugin is already loaded
+                    plugins.append(self._plugins[j])
+                    i, j = i + 1, j + 1
+                elif new_plugin_name < plugins_names[j]:
+                    # This plugin is new, load it
+                    plugin_file = os.path.join(plugins_path, plugins_files[i])
+                    # TODO: Error loading this plugin
+                    spec = importlib.util.spec_from_file_location(
+                        new_plugin_name, plugin_file)
+                    m = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(m)
+                    plugins.append(m)
+                    i += 1
+                else:
+                    # A plugin not used anymore
+                    j += 1
+        except KeyError:
+            logging.error('cannot reload torrent plugins: '
+                'plugins path not defined')
+        except IOError as e:
+            logging.error('cannot list plugins in {}: {}'.format(
+                plugins_path, e))
         self._plugins = plugins
 
     async def _plugin_method_wrapper(self, method, *args):
@@ -1007,16 +966,16 @@ class TorrentEngine(object):
         return (self._QUALITY_VALUES, self._CODEC_VALUES,
             self._RESOLUTION_VALUES, self._3D_VALUES)
 
-    async def search(self, title, options, filter=None):
+    async def search(self, title):
         '''Search torrents by title.'''
         self._reload_plugins()
         results = await tornado.gen.multi(
-            [self._plugin_method_wrapper(p.search, title, options)
+            [self._plugin_method_wrapper(p.search, title, self._options)
             for p in self._plugins])
         torrents = []
         for r in results:
             if r is not None:
-                torrents.extend(self._filter(r, filter))
+                torrents.extend(self._filter(r))
         torrents.sort(key=lambda x: x.seeders, reverse=True)
         return torrents
 

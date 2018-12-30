@@ -22,7 +22,7 @@ rm -rf ~/.tvfamily/profiles
 echo 'executing the server in background'
 PYTHONPATH="$PYTHONPATH:$ROOTDIR" coverage run $BINDIR/tvfamily -c "$CONFFILE" &
 serverpid=$!
-sleep 1
+sleep 2
 
 # Launch the client
 echo 'executing the client'

@@ -57,8 +57,9 @@ def _parse_title(data):
     m = _RE_TITLE.search(data)
     if m:
         title = m.group('title')
+        air_year = m.group('air_year')
         if air_year is not None:
-            air_year = int(m.group('air_year'))
+            air_year = int(air_year)
         end_year = m.group('end_year')
         if end_year is not None:
             if end_year.strip() != '':

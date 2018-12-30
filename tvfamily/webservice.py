@@ -114,8 +114,7 @@ class GetCategoriesHandler(tvfamily.webcommon.BaseHandler):
     '''Return the categories list.'''
 
     def get(self):
-        self.write_json(
-            categories=[c.name for c in self._core.get_categories()])
+        self.write_json(categories=self._core.get_categories())
 
 class GetTopHandler(tvfamily.webcommon.BaseHandler):
     '''Return the top list of medias of a given category.'''
@@ -123,11 +122,11 @@ class GetTopHandler(tvfamily.webcommon.BaseHandler):
     async def get(self):
         try:
             category = self.get_query_argument('category')
-            medias = await self._core.top(category)
+            profile = self.get_query_argument('profile')
+            medias = await self._core.top(profile, category)
             self.write_json(top=[m.todict() for m in medias])
-        except tornado.web.MissingArgumentError:
-            self.write_error(msg="missing 'category' argument")
-        except tvfamily.CoreError as e:
+        except (tornado.web.MissingArgumentError,
+                tvfamily.core.CoreError, KeyError) as e:
             self.write_error(msg=str(e))
 
 class GetTitleHandler(tvfamily.webcommon.BaseHandler):
