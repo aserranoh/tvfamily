@@ -119,11 +119,11 @@ class GetCategoriesHandler(tvfamily.webcommon.BaseHandler):
 class GetTopHandler(tvfamily.webcommon.BaseHandler):
     '''Return the top list of medias of a given category.'''
 
-    async def get(self):
+    def get(self):
         try:
             category = self.get_query_argument('category')
             profile = self.get_query_argument('profile')
-            medias = await self._core.top(profile, category)
+            medias = self._core.top(profile, category)
             self.write_json(top=[m.todict() for m in medias])
         except (tornado.web.MissingArgumentError,
                 tvfamily.core.CoreError, KeyError) as e:

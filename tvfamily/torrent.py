@@ -49,3 +49,8 @@ class Torrent(object):
             self._name_info = tvfamily.PTN.parse(self.name)
         return self._name_info
 
+    def todict(self):
+        '''Return a dictionary with the elements of this instance.'''
+        return {'name': self.name, 'seeders': self.seeders,
+            'leechers': self.leechers}
+
