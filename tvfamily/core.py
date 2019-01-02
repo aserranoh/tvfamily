@@ -20,6 +20,7 @@ along with tvfamily; see the file COPYING.  If not, see
 <http://www.gnu.org/licenses/>.
 '''
 
+import datetime
 import glob
 import grp
 import importlib
@@ -90,6 +91,8 @@ class Core(object):
         self._profiles_manager = ProfilesManager(data_path, STATIC_PATH)
         self._build_titles_db(daemon)
         self._torrent_engine = TorrentEngine(data_path, options)
+        self._scheduler = TaskScheduler(options['server']['tasks_interval'],
+            self._titles_db, self._torrent_engine)
 
         # Switch to user tvfamily for security reasons
         if daemon:
@@ -166,6 +169,12 @@ class Core(object):
         category = self._titles_db.get_category(category)
         torrents = self._torrent_engine.top(category, filters)
         return self._titles_db.get_medias_from_torrents(torrents, category)
+
+    # Scheduler functions
+
+    async def run_scheduler(self):
+        '''Start the scheduler.'''
+        await self._scheduler.run()
 
     # Functions to navigate through the titles
 
@@ -388,10 +397,9 @@ class TitlesDB(object):
 
     def get_medias_from_torrents(self, torrents, category):
         '''Return a list of medias from a list of torrents.'''
-        # Preliminary filter of torrents (for example, complete seasons)
-        torrents = [t for t in torrents if category.is_valid(t)]
         # Get the list of titles
-        titles = [self._get_title_from_torrent(t, category) for t in torrents]
+        titles = [self._get_title_from_torrent_cached(t, category)
+            for t in torrents]
         # Discard the titles not found
         titles = [t for t in titles if t is not None]
         # Get the media corresponding to each title
@@ -406,7 +414,7 @@ class TitlesDB(object):
                 set_medias.add(m)
         return final_medias
 
-    def _get_title_from_torrent(self, torrent, category):
+    def _get_title_from_torrent_cached(self, torrent, category):
         '''Retrieves a title from the torrent name.'''
         try:
             imdb_id = self._get_imdb_id_from_torrent(torrent)
@@ -416,34 +424,18 @@ class TitlesDB(object):
             title = None
         return title
 
-    """async def get_medias_from_torrents(self, torrents, category, cache_expiracy):
-        '''Return a list of medias from a list of torrents.'''
-        # Preliminary filter of torrents (for example, complete seasons)
-        torrents = [t for t in torrents if category.is_valid(t)]
+    async def fetch_titles_from_torrents(self, torrents, category):
+        '''Fetch the list of medias from a list of torrents.'''
         # Get the list of titles
         titles = await tornado.gen.multi(
             [self._get_title_from_torrent(t, category) for t in torrents])
-        # Discard the titles not found
-        titles = [t for t in titles if t is not None]
+        # Discard the titles not found and repeated ones
+        titles = list(set([t for t in titles if t is not None]))
         # Fetch the IMDB data from the title
-        await tornado.gen.multi([t.fetch(cache_expiracy) for t in titles])
-        # Get the media corresponding to each title
-        medias = [title.get_media(torrent)
-            for title, torrent in zip(titles, torrents)]
-        # Remove repeated medias (keep its order)
-        set_medias = set()
-        final_medias = []
-        for m in medias:
-            if m not in set_medias:
-                final_medias.append(m)
-                set_medias.add(m)
-        # Fetch the media IMDB data (in case of, for example, episodes,
-        # fetch its individual information)
-        await tornado.gen.multi([m.fetch(cache_expiracy)
-            for m in final_medias])
-        return final_medias"""
+        await tornado.gen.multi([t.fetch() for t in titles])
+        # TODO: In case of series, fetch season/episodes information
 
-    """async def _get_title_from_torrent(self, torrent, category):
+    async def _get_title_from_torrent(self, torrent, category):
         '''Retrieves a title from the torrent name.'''
         try:
             imdb_id = self._get_imdb_id_from_torrent(torrent)
@@ -462,7 +454,7 @@ class TitlesDB(object):
                 logging.warning("title not found in IMDB: '{} {}'".format(
                     torrent.name_info['title'],
                     '({})'.format(year) if year is not None else ''))
-        return title"""
+        return title
 
     def _load_torrents_to_imdb(self):
         '''Load the database that maps torrent titles to imdb ids from its
@@ -627,6 +619,12 @@ class Title(object):
     def __str__(self):
         return self.name
 
+    def __hash__(self):
+        return hash(self._imdb_title.id)
+
+    def __eq__(self, other):
+        return self._imdb_title.id == other._imdb_title.id
+
     def _get_cached_file(self):
         return os.path.join(self.get_path(), self._imdb_title.id + '.json')
 
@@ -657,31 +655,11 @@ class Title(object):
     def get_year(self):
         return self._imdb_title['air_year']
 
-    async def fetch(self, cache_expiracy):
+    async def fetch(self):
         '''Fetch the attributes from IMDB.'''
-        # Check the cache
-        try:
-            self.check_cache(self._imdb_title._attrs, cache_expiracy)
-        except (ValueError, KeyError):
-            # The IMDB data must be fetched
-            await self._imdb_title.fetch()
-            # Update the timestamp of the general IMDB data
-            self._imdb_title._attrs['timestamp'] = time.time()
-            # Save the IMDB data to the file
-            self.save_imdb_data()
-
-    def check_cache(self, element, cache_expiracy):
-        '''Check if the database cache has expired.
-        Raises KeyError if the timestamp cannot be found in the database or
-        ValueError if the cache has expired.
-        '''
-        # If self._cache_expiracy is < 0, the cache never expires
-        if cache_expiracy == 0:
-            # Always fetch
-            raise ValueError()
-        elif cache_expiracy > 0:
-            if time.time() - element['timestamp'] > cache_expiracy:
-                raise ValueError()
+        await self._imdb_title.fetch()
+        # Save the IMDB data to the file
+        self.save_imdb_data()
 
     def save_imdb_data(self):
         '''Save the IMDB data to the cache file.'''
@@ -719,21 +697,6 @@ class TVSerie(Title):
         season = torrent.name_info['season']
         episode = torrent.name_info['episode'] 
         return Episode(self, season, episode)
-
-    async def fetch_season(self, season, cache_expiracy):
-        '''Fetch the attributes of a season from IMDB.'''
-        # Check the cache
-        try:
-            self.check_cache(
-                self._imdb_title['seasons'][str(season)], cache_expiracy)
-        except (ValueError, KeyError):
-            # The IMDB data must be fetched
-            await self._imdb_title.fetch_season(season)
-            # Update the timestamp for this season
-            s = self._imdb_title['seasons'][str(season)]
-            s['timestamp'] = time.time()
-            # Save the IMDB data to the file
-            self.save_imdb_data()
 
     def has_episodes(self):
         '''Always return True (a tv series has episodes).'''
@@ -785,10 +748,6 @@ class Episode(object):
         except KeyError:
             rating = None
         return rating
-
-    async def fetch(self, cache_expiracy):
-        '''Fetch the information for this episode.'''
-        await self.title.fetch_season(self.season, cache_expiracy)
 
     def todict(self):
         '''Return a dictionary with some of the attributes of this instance.'''
@@ -936,17 +895,21 @@ class TorrentEngine(object):
     async def fetch_top(self, category):
         '''Fetch the top list of torrents for a given category.'''
         self._reload_plugins()
-        results = await tornado.gen.multi(
-            [self._plugin_method_wrapper(p.top, category, self._options)
-            for p in self._plugins])
+        results = await tornado.gen.multi([self._plugin_method_wrapper(
+            p.top, category.name, self._options) for p in self._plugins])
         # Flatten the list of torrents
         torrents = []
         for r in results:
             if r is not None:
                 torrents.extend(r)
+        # Preliminary filter of torrents (for example, complete seasons)
+        torrents = [t for t in torrents if category.is_valid(t)]
         # Dump the list of torrents into a file
-        with open('torrents.json', 'w') as f:
-            f.write(json.dumps([t.todict() for t in torrents]))
+        if torrents:
+            filename = self._get_torrents_list_file(category)
+            with open(filename, 'w') as f:
+                f.write(json.dumps([t.todict() for t in torrents]))
+        return torrents
 
     def _reload_plugins(self):
         '''Called before each operation. Load new modules in plugins_path
@@ -1020,4 +983,39 @@ class TorrentEngine(object):
                 torrents.extend(self._filter(r))
         torrents.sort(key=lambda x: x.seeders, reverse=True)
         return torrents
+
+
+class TaskScheduler(object):
+    '''Executes periodic tasks.'''
+
+    def __init__(self, interval, titles_db, torrents_engine):
+        self.interval = datetime.timedelta(seconds=interval)
+        self.titles_db = titles_db
+        self.torrents_engine = torrents_engine
+        self.next_execution = datetime.datetime.now()
+
+    async def run(self):
+        while 1:
+            # Execute tasks here
+            torrents = await self._fetch_torrents()
+            await self._fetch_imdb_titles(torrents)
+            # compute the next execution time
+            self.next_execution += self.interval
+            # Compute the time to sleep
+            sleep_interval = self.next_execution - datetime.datetime.now()
+            await tornado.gen.sleep(sleep_interval.total_seconds())
+
+    async def _fetch_torrents(self):
+        '''Fetch the top lists of torrents for all the categories.'''
+        torrents = []
+        for c in self.titles_db.get_categories_names():
+            category = self.titles_db.get_category(c)
+            t = await self.torrents_engine.fetch_top(category)
+            torrents.append((c, t))
+        return torrents
+
+    async def _fetch_imdb_titles(self, torrents):
+        '''Fetch the titles from a list of torrents.'''
+        for c, t in torrents:
+            await self.titles_db.fetch_titles_from_torrents(t, c)
 

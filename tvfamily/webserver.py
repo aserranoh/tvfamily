@@ -20,6 +20,7 @@ along with tvfamily; see the file COPYING.  If not, see
 <http://www.gnu.org/licenses/>.
 '''
 
+import tornado.ioloop
 import tornado.iostream
 import tornado.web
 
@@ -276,6 +277,9 @@ class WebServer(tvfamily.httpserver.HTTPServer):
             ws = tvfamily.webservice.WebService(self._core)
             handlers.extend(ws.get_handlers())
             self.add_handlers(handlers)
+            # Run the core's task scheduler
+            tornado.ioloop.IOLoop.current().spawn_callback(
+                self._core.run_scheduler)
         except (tvfamily.httpserver.HTTPServerError,
                 tvfamily.core.CoreError) as e:
             raise ServerError(str(e))
