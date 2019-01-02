@@ -1011,7 +1011,7 @@ class TaskScheduler(object):
         for c in self.titles_db.get_categories_names():
             category = self.titles_db.get_category(c)
             t = await self.torrents_engine.fetch_top(category)
-            torrents.append((c, t))
+            torrents.append((category, t))
         return torrents
 
     async def _fetch_imdb_titles(self, torrents):
