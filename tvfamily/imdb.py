@@ -1,7 +1,7 @@
 
 '''imdb.py - Obtains movies information from the site www.imdb.com.
 
-Copyright 2018 Antonio Serrano Hernandez
+Copyright 2018 2019 Antonio Serrano Hernandez
 
 This file is part of tvfamily.
 
@@ -27,7 +27,7 @@ import tornado.httpclient
 import urllib.parse
 
 __author__ = 'Antonio Serrano Hernandez'
-__copyright__ = 'Copyright (C) 2018 Antonio Serrano Hernandez'
+__copyright__ = 'Copyright (C) 2018 2019 Antonio Serrano Hernandez'
 __version__ = '0.1'
 __license__ = 'GPL'
 __maintainer__ = 'Antonio Serrano Hernandez'
@@ -347,8 +347,14 @@ class IMDBTitle(object):
         else:
             self._attrs = attrs
 
+    def __eq__(self, other):
+        return self.id == other.id
+
     def __getitem__(self, attr):
         return self._attrs[attr]
+
+    def __hash__(self):
+        return hash(self.id)
 
     async def fetch(self):
         '''Obtain the remaining attributes from the title's main IMDB page.'''

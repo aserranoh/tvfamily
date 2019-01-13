@@ -1,7 +1,7 @@
 
 '''webservice.py - Implements the Web Service layer.
 
-Copyright 2018 Antonio Serrano Hernandez
+Copyright 2018 2019 Antonio Serrano Hernandez
 
 This file is part of tvfamily.
 
@@ -27,7 +27,7 @@ import tvfamily.core
 import tvfamily.webcommon
 
 __author__ = 'Antonio Serrano Hernandez'
-__copyright__ = 'Copyright (C) 2018 Antonio Serrano Hernandez'
+__copyright__ = 'Copyright (C) 2018 2019 Antonio Serrano Hernandez'
 __version__ = '0.1'
 __license__ = 'GPL'
 __maintainer__ = 'Antonio Serrano Hernandez'
@@ -132,12 +132,13 @@ class GetTopHandler(tvfamily.webcommon.BaseHandler):
 class GetTitleHandler(tvfamily.webcommon.BaseHandler):
     '''Serve the title information.'''
 
-    async def get(self):
-        category = self.get_query_argument('category')
-        imdb_id = self.get_query_argument('title')
-        title = await self._core.get_title(category, imdb_id)
-        self.write(json.dumps(title.tojson()))
-
+    def get(self):
+        try:
+            title_id = self.get_query_argument('title_id')
+            title = self._core.get_title(title_id)
+            self.write_json(title=title.todict())
+        except (tornado.web.MissingArgumentError, KeyError) as e:
+            self.write_error(msg=str(e))
 
 class WebService(object):
     '''Represents the web service API.'''
@@ -155,5 +156,6 @@ class WebService(object):
             (r'/api/deleteprofile', DeleteProfileHandler, d),
             (r'/api/getcategories', GetCategoriesHandler, d),
             (r'/api/gettop', GetTopHandler, d),
+            (r'/api/gettitle', GetTitleHandler, d),
         ]
 

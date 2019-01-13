@@ -1,7 +1,7 @@
 
 '''core.py - Implements the Core layer.
 
-Copyright 2018 Antonio Serrano Hernandez
+Copyright 2018 2019 Antonio Serrano Hernandez
 
 This file is part of tvfamily.
 
@@ -40,7 +40,7 @@ import tvfamily.PTN
 import tvfamily.torrent
 
 __author__ = 'Antonio Serrano Hernandez'
-__copyright__ = 'Copyright (C) 2018 Antonio Serrano Hernandez'
+__copyright__ = 'Copyright (C) 2018 2019 Antonio Serrano Hernandez'
 __version__ = '0.1'
 __license__ = 'GPL'
 __maintainer__ = 'Antonio Serrano Hernandez'
@@ -121,15 +121,10 @@ class Core(object):
 
     def _define_categories(self, path, daemon):
         '''Define the list of caterogies.'''
-        categories = [Category(*c, path)
-            for c in [('TV Series', TVSerie, ['TV Series', 'TV Mini-Series']),
-                ('Movies', Movie, ['Movie'])]]
-        # Create the directories for the categories if they don't exist
-        for c in categories:
-            if not os.path.exists(c.get_path()):
-                os.mkdir(c.path, mode=0o755)
-                if daemon:
-                    os.chown(category_path, _TVFAMILY_UID, _TVFAMILY_GID)
+        categories = [Category(*c) for c in [
+            ('TV Series', ['TV Series', 'TV Mini-Series']),
+            ('Movies', ['Movie'])
+        ]]
         return categories
 
     # Profile functions
@@ -168,7 +163,11 @@ class Core(object):
         # Get the top list of torrents
         category = self._titles_db.get_category(category)
         torrents = self._torrent_engine.top(category, filters)
-        return self._titles_db.get_medias_from_torrents(torrents, category)
+        return self._titles_db.get_medias_from_torrents(torrents)
+
+    def get_title(self, imdb_id):
+        '''Return the title with the given imdb_id.'''
+        return self._titles_db.get_title(imdb_id)
 
     # Scheduler functions
 
@@ -177,10 +176,6 @@ class Core(object):
         await self._scheduler.run()
 
     # Functions to navigate through the titles
-
-    async def get_title(self, category, imdb_id):
-        '''Return the title within category with the given imdb_id.'''
-        return (await self._titles_db.get_title(category, imdb_id))
 
     async def search(self, title, category):
         '''Search titles by name in IMDB.'''
@@ -343,31 +338,16 @@ class Category(object):
 
     _RE_KEY = re.compile(r'[^a-zA-Z]+')
 
-    def __init__(self, name, title_class, imdb_type, path):
+    def __init__(self, name, imdb_type):
         # The name of the category (the value shown in the web site)
         self.name = name
-        # The subclass of the titles of this category (to instantiate them)
-        self.title_class = title_class
         # IMDB types associated with this category (to perform searches in
         # IMDB).
         self.imdb_type = imdb_type
-        # Root path to the categories directory tree
-        self.root_path = path
 
     def get_id(self):
         '''Return a canonical form of this category's name.'''
         return self._RE_KEY.sub('_', self.name.lower())
-
-    def get_path(self):
-        return os.path.join(self.root_path, self.get_id())
-
-    def get_title(self, imdb_title):
-        '''Return an instance of a title in this category.'''
-        return self.title_class(self, imdb_title)
-
-    def is_valid(self, torrent):
-        '''Return True if the torrent is valid for this category of videos.'''
-        return self.title_class.is_valid(torrent)
 
 
 class TitlesDB(object):
@@ -375,7 +355,10 @@ class TitlesDB(object):
 
     # Name of the file that holds the mapping between torrent titles and IMDB
     # ids
-    _IMDB_ID_CACHE = 'torrents2imdb.json'
+    IMDB_ID_CACHE = 'torrents2imdb.json'
+
+    # Name of the IMDBTitle database files
+    DB_FILENAME = 'db.json'
 
     def __init__(self, categories, path):
         self._categories = dict((c.name, c) for c in categories)
@@ -385,7 +368,7 @@ class TitlesDB(object):
 
     def _get_imdb_cache_file(self):
         '''Return the IMDB cache file.'''
-        return os.path.join(self._root_path, self._IMDB_ID_CACHE)
+        return os.path.join(self._root_path, self.IMDB_ID_CACHE)
 
     def get_category(self, category):
         '''Return a category by its name.'''
@@ -395,31 +378,32 @@ class TitlesDB(object):
         '''Return a list with the names of the categories.'''
         return sorted(self._categories.keys())
 
-    def get_medias_from_torrents(self, torrents, category):
+    def get_medias_from_torrents(self, torrents):
         '''Return a list of medias from a list of torrents.'''
         # Get the list of titles
-        titles = [self._get_title_from_torrent_cached(t, category)
+        titles = [self._get_title_from_torrent_cached(t)
             for t in torrents]
         # Discard the titles not found
         titles = [t for t in titles if t is not None]
         # Get the media corresponding to each title
         medias = [title.get_media(torrent)
             for title, torrent in zip(titles, torrents)]
-        # Remove repeated medias (keep its order)
+        # Remove repeated medias and null ones (keep its order)
         set_medias = set()
         final_medias = []
         for m in medias:
-            if m not in set_medias:
-                final_medias.append(m)
-                set_medias.add(m)
+            if m is not None:
+                if m not in set_medias:
+                    final_medias.append(m)
+                    set_medias.add(m)
         return final_medias
 
-    def _get_title_from_torrent_cached(self, torrent, category):
+    def _get_title_from_torrent_cached(self, torrent):
         '''Retrieves a title from the torrent name.'''
         try:
             imdb_id = self._get_imdb_id_from_torrent(torrent)
             # ID found, build the Title instance
-            title = category.get_title(imdb_id)
+            title = self.get_title(imdb_id)
         except KeyError:
             title = None
         return title
@@ -427,34 +411,55 @@ class TitlesDB(object):
     async def fetch_titles_from_torrents(self, torrents, category):
         '''Fetch the list of medias from a list of torrents.'''
         # Get the list of titles
-        titles = await tornado.gen.multi(
+        imdb_titles = await tornado.gen.multi(
             [self._get_title_from_torrent(t, category) for t in torrents])
         # Discard the titles not found and repeated ones
-        titles = list(set([t for t in titles if t is not None]))
+        imdb_titles = list(set([t for t in imdb_titles if t is not None]))
         # Fetch the IMDB data from the title
-        await tornado.gen.multi([t.fetch() for t in titles])
+        await tornado.gen.multi([t.fetch() for t in imdb_titles])
         # TODO: In case of series, fetch season/episodes information
+        # Save the dbs to disk
+        for t in imdb_titles:
+            self._save_imdb_title(t)
 
     async def _get_title_from_torrent(self, torrent, category):
         '''Retrieves a title from the torrent name.'''
         try:
             imdb_id = self._get_imdb_id_from_torrent(torrent)
             # ID found, build the Title instance
-            title = category.get_title(imdb_id)
+            imdb_title = IMDBTitle(imdb_id)
         except KeyError:
             # ID not found in the cache, perform a search in the imdb site
             results = await tvfamily.imdb.search(torrent.name_info['title'],
                 category.imdb_type, torrent.name_info.get('year'))
             if len(results):
-                title = category.get_title(results[0])
+                imdb_title = results[0]
                 self._set_imdb_id_from_torrent(torrent, results[0].id)
             else:
-                title = None
+                imdb_title = None
                 year = torrent.name_info.get('year')
                 logging.warning("title not found in IMDB: '{} {}'".format(
                     torrent.name_info['title'],
                     '({})'.format(year) if year is not None else ''))
-        return title
+        return imdb_title
+
+    def _load_imdb_title(self, imdb_id):
+        '''Load an IMDBTitle info from its id.'''
+        db_path = os.path.join(self._root_path, imdb_id, self.DB_FILENAME)
+        with open(db_path, 'r') as f:
+            attrs = json.loads(f.read())
+        return tvfamily.imdb.IMDBTitle(imdb_id, attrs)
+
+    def _save_imdb_title(self, imdb_title):
+        '''Save the IMDB info to disk.'''
+        title_path = os.path.join(self._root_path, imdb_title.id)
+        if not os.path.exists():
+            os.mkdir(title_path)
+        db_path = os.path.join(title_path, self.DB_FILENAME)
+        try:
+            with open(db_path, 'w') as f:
+                f.write(json.dumps(imdb_title._attrs))
+        except IOError: pass
 
     def _load_torrents_to_imdb(self):
         '''Load the database that maps torrent titles to imdb ids from its
@@ -496,20 +501,20 @@ class TitlesDB(object):
         self._torrents_to_imdb[k] = imdb_id
         self._save_torrents_to_imdb()
 
-    async def search(self, title, category):
+    def get_title(self, imdb_id):
+        '''Return a title given its imdb_id.'''
+        try:
+            return Title(self._load_imdb_title(imdb_id))
+        except IOError:
+            raise KeyError('title with imdb_id {} not found'.format(imdb_id))
+
+    """async def search(self, title, category):
         '''Search titles by name in IMDB.'''
         category = self._categories[category]
         results = await tvfamily.imdb.search(title, category.imdb_type)
         titles = [category.get_title(x) for x in results]
         await tornado.gen.multi([t.fetch() for t in titles])
         return titles
-
-    async def get_title(self, category, imdb_id):
-        '''Return a title given its category and imdb_id.'''
-        category = self._categories[category]
-        t = category.get_title(imdb_id)
-        await t.fetch()
-        return t
 
     async def get_video_from_media(self, media):
         '''Return the video in the local machine, if any, for this media.'''
@@ -523,17 +528,17 @@ class TitlesDB(object):
             if (t is not None
                     and t._imdb_title.id == media.title._imdb_title.id):
                 return media.get_video(p)
-        return None
+        return None"""
 
 
-class Video(object):
+"""class Video(object):
     '''Represents a video (movie or tv series episode).'''
 
     _CHUNK_SIZE = 64 * 1024
     _EXTENSIONS = ['mp4']
-    """_FFPROBE = ['ffprobe', '-v', 'error', '-show_entries',
+    '''_FFPROBE = ['ffprobe', '-v', 'error', '-show_entries',
         'stream=codec_type,codec_name:stream_tags=language,title:'
-        'format=duration:format=duration', '-of', 'json']"""
+        'format=duration:format=duration', '-of', 'json']'''
 
     def __init__(self, path):
         self.path = path
@@ -597,85 +602,55 @@ class Subtitle(object):
     def __init__(self, path, prefix_len):
         self.path = path
         self.label = os.path.basename(
-            self.path)[prefix_len + 1:].rpartition('.')[0]
+            self.path)[prefix_len + 1:].rpartition('.')[0]"""
 
 
 class Title(object):
-    '''Base class for every type of media (movies, tv series, ...).'''
+    '''Represents a title (a movie or tv series).'''
 
-    def __init__(self, category, imdb_title):
-        self.category = category
-        # A representation of the title in the IMDB database
-        if isinstance(imdb_title, str):
-            self._imdb_title = tvfamily.imdb.IMDBTitle(imdb_title)
+    def __init__(self, imdb_title):
+        self.imdb_title = imdb_title
+        if self.imdb_title['type'] in Movie.TYPES:
+            self.type = Movie(self)
         else:
-            self._imdb_title = imdb_title
-        # Load the cached IMDB data if present
-        try:
-            with open(self._get_cached_file(), 'r') as f:
-                self._imdb_title._attrs.update(json.loads(f.read()))
-        except IOError: pass
+            self.type = TVSerie(self)
 
     def __str__(self):
         return self.name
 
-    def __hash__(self):
-        return hash(self._imdb_title.id)
-
-    def __eq__(self, other):
-        return self._imdb_title.id == other._imdb_title.id
-
-    def _get_cached_file(self):
-        return os.path.join(self.get_path(), self._imdb_title.id + '.json')
-
     def get_genre(self):
-        return self._imdb_title['genre']
+        return self.imdb_title['genre']
 
-    def get_url_params_id(self):
-        return 'title=' + self._imdb_title.id
-
-    def get_name(self):
-        return self._imdb_title['title']
-
-    def get_path(self):
-        return self.category.get_path()
+    def get_media(self, torrent):
+        '''Return the media that represents this torrent.'''
+        return self.type.get_media(torrent)
 
     def get_plot(self):
-        return self._imdb_title['plot']
+        return self.imdb_title['plot']
 
     def get_poster_url(self):
-        return self._imdb_title['poster_url']
+        return self.imdb_title['poster_url']
 
     def get_rating(self):
-        return self._imdb_title['rating']
+        return self.imdb_title['rating']
 
     def get_title(self):
-        return self
+        return self.imdb_title['title']
 
     def get_year(self):
-        return self._imdb_title['air_year']
-
-    async def fetch(self):
-        '''Fetch the attributes from IMDB.'''
-        await self._imdb_title.fetch()
-        # Save the IMDB data to the file
-        self.save_imdb_data()
-
-    def save_imdb_data(self):
-        '''Save the IMDB data to the cache file.'''
-        try:
-            with open(self._get_cached_file(), 'w') as f:
-                f.write(json.dumps(self._imdb_title._attrs))
-        except IOError: pass
+        return self.imdb_title['air_year']
 
     def todict(self):
         '''Return a dictionary with some of the attributes of this instance.'''
-        return {'title': self.get_name(), 'poster_url': self.get_poster_url(),
-            'rating': self.get_rating()}
+        return {'title': self.get_title(), 'title_id': self.imdb_title.id,
+            'poster_url': self.get_poster_url(), 'rating': self.get_rating()}
 
 
-class TVSerie(Title):
+class TVSerie(object):
     '''Represents a TV Serie.'''
+
+    # TODO: Add TVMiniSerie
+    TYPES = ['TV Series', 'TV Mini-Series']
 
     """def get_episode(self, season, episode):
         '''Return the given episode of this tv series.'''
@@ -692,22 +667,24 @@ class TVSerie(Title):
             self._add_episodes()
         return sorted(self._episodes[season].keys())"""
 
+    def __init__(self, title):
+        self.title = title
+
     def get_media(self, torrent):
         '''Return this tv series' episode related to the torrent.'''
-        season = torrent.name_info['season']
-        episode = torrent.name_info['episode'] 
-        return Episode(self, season, episode)
+        # TODO: Check that season and episode are in the db
+        try:
+            season = torrent.name_info['season']
+            episode = torrent.name_info['episode']
+            return Episode(self.title, season, episode)
+        except KeyError:
+            return None
 
-    def has_episodes(self):
+    """def has_episodes(self):
         '''Always return True (a tv series has episodes).'''
         return True
 
-    @classmethod
-    def is_valid(cls, torrent):
-        '''Return True if torrent contains a valid TV Series episode.'''
-        return 'season' in torrent.name_info and 'episode' in torrent.name_info
-
-    """def get_seasons(self):
+    def get_seasons(self):
         '''Return the seasons available for this title.'''
         if self._episodes is None:
             self._add_episodes()
@@ -726,28 +703,24 @@ class Episode(object):
         '''Two episodes are the same if they are from the same title and
         are the same episode (same season and episode numbers).
         '''
-        return (self.title._imdb_title.id == other.title._imdb_title.id
+        return (self.title.imdb_title.id == other.title.imdb_title.id
             and self.season == other.season and self.episode == other.episode)
 
     def __hash__(self):
-        return hash((self.title._imdb_title.id, self.season, self.episode))
+        return hash((self.title.imdb_title.id, self.season, self.episode))
 
     def __str__(self):
         return '{} {}x{:02d}'.format(
-            self.title.name, self.season, self.episode)
+            self.title.get_title(), self.season, self.episode)
 
-    def get_url_params_id(self):
-        return 'title={}&season={}&episode={}'.format(
-            self.title._imdb_title.id, self.season, self.episode)
-
-    def get_rating(self):
+    """def get_rating(self):
         try:
             db_season = self.title._imdb_title['seasons'][str(self.season)]
             db_episode = db_season[str(self.episode)]
             rating = db_episode['rating']
         except KeyError:
             rating = None
-        return rating
+        return rating"""
 
     def todict(self):
         '''Return a dictionary with some of the attributes of this instance.'''
@@ -756,32 +729,24 @@ class Episode(object):
         return d
 
 
-class Movie(Title):
+class Movie(object):
     '''Represents a movie.'''
 
-    def __eq__(self, other):
-        '''Two movies are the same if they are the same title.'''
-        return (self.get_title()._imdb_title.id
-            == other.get_title()._imdb_title.id)
+    TYPES = ['Movie']
 
-    def __hash__(self):
-        return hash(self.get_title()._imdb_title.id)
-
-    def get_duration(self):
-        return self._imdb_title['duration']
+    def __init__(self, title):
+        self.title = title
 
     def get_media(self, torrent):
         '''Return itself.'''
-        return self
+        return self.title
+
+    """def get_duration(self):
+        return self._imdb_title['duration']
 
     def has_episodes(self):
         '''Always return False (a movie doesn't have episodes).'''
         return False
-
-    @classmethod
-    def is_valid(cls, torrent):
-        '''Return True if torrent contains a valid Movie.'''
-        return True
 
     def get_all_videos_paths(self):
         '''Return all the videos in the same path than this movie.'''
@@ -790,7 +755,7 @@ class Movie(Title):
 
     def get_video(self, path):
         '''Return the local video corresponding to this movie.'''
-        return Video(path)
+        return Video(path)"""
 
 
 class TorrentEngine(object):
@@ -902,8 +867,6 @@ class TorrentEngine(object):
         for r in results:
             if r is not None:
                 torrents.extend(r)
-        # Preliminary filter of torrents (for example, complete seasons)
-        torrents = [t for t in torrents if category.is_valid(t)]
         # Dump the list of torrents into a file
         if torrents:
             filename = self._get_torrents_list_file(category)
