@@ -81,6 +81,7 @@ class Core(object):
 
     def __init__(self, options, daemon):
         self._options = options
+        logging.basicConfig(level=logging.INFO)
         if daemon:
             data_path = _DAEMON_DATA_PATH
         else:
@@ -427,7 +428,7 @@ class TitlesDB(object):
         try:
             imdb_id = self._get_imdb_id_from_torrent(torrent)
             # ID found, build the Title instance
-            imdb_title = IMDBTitle(imdb_id)
+            imdb_title = tvfamily.imdb.IMDBTitle(imdb_id)
         except KeyError:
             # ID not found in the cache, perform a search in the imdb site
             results = await tvfamily.imdb.search(torrent.name_info['title'],
@@ -453,7 +454,7 @@ class TitlesDB(object):
     def _save_imdb_title(self, imdb_title):
         '''Save the IMDB info to disk.'''
         title_path = os.path.join(self._root_path, imdb_title.id)
-        if not os.path.exists():
+        if not os.path.exists(title_path):
             os.mkdir(title_path)
         db_path = os.path.join(title_path, self.DB_FILENAME)
         try:
@@ -615,8 +616,23 @@ class Title(object):
         else:
             self.type = TVSerie(self)
 
+    def __eq__(self, other):
+        '''Two episodes are the same if they are from the same title and
+        are the same episode (same season and episode numbers).
+        '''
+        return self.imdb_title.id == other.imdb_title.id
+
+    def __hash__(self):
+        return hash(self.imdb_title.id)
+
     def __str__(self):
         return self.name
+
+    def get_air_year(self):
+        return self.imdb_title['air_year']
+
+    def get_end_year(self):
+        return self.imdb_title['end_year']
 
     def get_genre(self):
         return self.imdb_title['genre']
@@ -637,13 +653,12 @@ class Title(object):
     def get_title(self):
         return self.imdb_title['title']
 
-    def get_year(self):
-        return self.imdb_title['air_year']
-
     def todict(self):
         '''Return a dictionary with some of the attributes of this instance.'''
         return {'title': self.get_title(), 'title_id': self.imdb_title.id,
-            'poster_url': self.get_poster_url(), 'rating': self.get_rating()}
+            'poster_url': self.get_poster_url(), 'rating': self.get_rating(),
+            'air_year': self.get_air_year(), 'end_year': self.get_end_year(),
+            'genre': self.get_genre(), 'plot': self.get_plot()}
 
 
 class TVSerie(object):
@@ -703,7 +718,7 @@ class Episode(object):
         '''Two episodes are the same if they are from the same title and
         are the same episode (same season and episode numbers).
         '''
-        return (self.title.imdb_title.id == other.title.imdb_title.id
+        return (self.title == other.title
             and self.season == other.season and self.episode == other.episode)
 
     def __hash__(self):
@@ -859,6 +874,7 @@ class TorrentEngine(object):
 
     async def fetch_top(self, category):
         '''Fetch the top list of torrents for a given category.'''
+        logging.info('fetching top {}...'.format(category.name))
         self._reload_plugins()
         results = await tornado.gen.multi([self._plugin_method_wrapper(
             p.top, category.name, self._options) for p in self._plugins])
@@ -872,6 +888,7 @@ class TorrentEngine(object):
             filename = self._get_torrents_list_file(category)
             with open(filename, 'w') as f:
                 f.write(json.dumps([t.todict() for t in torrents]))
+        logging.info('received top {}'.format(category.name))
         return torrents
 
     def _reload_plugins(self):
@@ -960,8 +977,11 @@ class TaskScheduler(object):
     async def run(self):
         while 1:
             # Execute tasks here
+            start = time.time()
             torrents = await self._fetch_torrents()
             await self._fetch_imdb_titles(torrents)
+            logging.info('finished tasks in {} seconds'.format(
+                int(time.time() - start)))
             # compute the next execution time
             self.next_execution += self.interval
             # Compute the time to sleep
@@ -970,15 +990,15 @@ class TaskScheduler(object):
 
     async def _fetch_torrents(self):
         '''Fetch the top lists of torrents for all the categories.'''
-        torrents = []
-        for c in self.titles_db.get_categories_names():
-            category = self.titles_db.get_category(c)
-            t = await self.torrents_engine.fetch_top(category)
-            torrents.append((category, t))
-        return torrents
+        categories = [self.titles_db.get_category(c)
+            for c in self.titles_db.get_categories_names()]
+        torrents = await tornado.gen.multi([self.torrents_engine.fetch_top(c)
+            for c in categories])
+        return zip(categories, torrents)
 
     async def _fetch_imdb_titles(self, torrents):
         '''Fetch the titles from a list of torrents.'''
-        for c, t in torrents:
-            await self.titles_db.fetch_titles_from_torrents(t, c)
+        await tornado.gen.multi([
+            self.titles_db.fetch_titles_from_torrents(t, c)
+            for c, t in torrents])
 

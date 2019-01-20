@@ -134,7 +134,7 @@ class GetTitleHandler(tvfamily.webcommon.BaseHandler):
 
     def get(self):
         try:
-            title_id = self.get_query_argument('title_id')
+            title_id = self.get_query_argument('id')
             title = self._core.get_title(title_id)
             self.write_json(title=title.todict())
         except (tornado.web.MissingArgumentError, KeyError) as e:

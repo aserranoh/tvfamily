@@ -21,6 +21,7 @@ along with tvfamily; see the file COPYING.  If not, see
 '''
 
 import html.parser
+import logging
 import re
 import tornado.gen
 import tornado.httpclient
@@ -132,15 +133,14 @@ class TorrentsListParser(html.parser.HTMLParser):
             self._in_description = False
 
 
-@tornado.gen.coroutine
-def top(category, options):
+async def top(category, options):
     '''Search ThePirateBay site for the top videos.'''
     http_client = tornado.httpclient.AsyncHTTPClient()
     torrents = []
     urls = ['{}/top/{}'.format(options['plugins']['thepiratebay']['url'], c)
         for c in _TPB_CATEGORIES[category]]
-    contents = yield [http_client.fetch(url, headers=_HTTP_HEADERS)
-        for url in urls]
+    contents = await tornado.gen.multi([
+        http_client.fetch(url, headers=_HTTP_HEADERS) for url in urls])
     # Parse the important information
     for c in contents:
         parser = TorrentsListParser()
@@ -148,14 +148,13 @@ def top(category, options):
         torrents.extend(parser.torrents)
     return torrents
 
-@tornado.gen.coroutine
-def search(title, options):
+async def search(title, options):
     '''Search ThePirateBay for a given title.'''
     http_client = tornado.httpclient.AsyncHTTPClient()
     query_params = {'q': title, 'video': 'on', 'page': '0', 'orderby': '99'}
     url = '{}/s/?{}'.format(options['plugins']['thepiratebay']['url'],
         urllib.parse.urlencode(query_params))
-    contents = yield http_client.fetch(url, headers=_HTTP_HEADERS)
+    contents = await http_client.fetch(url, headers=_HTTP_HEADERS)
     # Parse the important information
     parser = TorrentsListParser()
     parser.feed(contents.body.decode('utf-8'))

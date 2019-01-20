@@ -22,6 +22,7 @@ along with tvfamily; see the file COPYING.  If not, see
 
 import html.parser
 import json
+import logging
 import re
 import tornado.httpclient
 import urllib.parse
@@ -50,6 +51,7 @@ _SEARCH_TYPES.append('Movie')
 _RE_TITLE = re.compile(r'(?P<title>.*?)\s*'
     r'(\(.*?(?P<air_year>\d{4})(–(?P<end_year>\d{4}|\s*))?\))?$')
 _RE_DURATION = re.compile(r'PT(?P<h>\d+)H(?P<m>\d+)M')
+_RE_SEASON = re.compile(r'/title/[^/]+/episodes\?season=(?P<season>\d+)')
 
 def _parse_title(data):
     '''Return the air and end year of a tv series.'''
@@ -146,6 +148,7 @@ class TitleParser(html.parser.HTMLParser):
     <meta property='og:title' content="TITLE (TYPE START_YEAR–END_YEAR )" />
     <script type="application/ld+json">{
       ...
+      "image": "POSTER_URL",
       "genre": [
         "GENRE",
         ...
@@ -160,19 +163,25 @@ class TitleParser(html.parser.HTMLParser):
       ...
     }</script>
     <div class="poster">
-      <a href="..."><img alt="..." title="..." src="POSTER_URL" /></a>
+      <a href="..."><img alt="..." title="..." src="POSTER_URL_SMALL" /></a>
+    </div>
+    <div class="seasons-and-year-nav">
+       ...
+       <a href="/title/tt3006802/episodes?season=6&ref_=tt_eps_sn_6">6</a>
+       ...
     </div>
     '''
 
     def __init__(self):
         super(TitleParser, self).__init__()
         # Hold the title's attributes to return
-        # By default set the poster_url to None, in case it's not found
-        self.attrs = {'poster_url': None}
         # True if we are inside the element that contains the DB in JSON format
         self._in_db = False
         # True if we are inside the <div> element that contains the poster
         self._in_poster = False
+        # True if we are inside the <div> element that contains the seasons
+        self._in_seasons = False
+        self.attrs = {}
 
     def handle_starttag(self, tag, attrs):
         if tag == 'script':
@@ -186,25 +195,43 @@ class TitleParser(html.parser.HTMLParser):
             if attrs[0] == ('property', 'og:title'):
                 # Get the air and end years contained in the title
                 (self.attrs['title'], self.attrs['air_year'],
-                    self.attrs['end_year']) = _parse_title(attrs[1][1])
+                    end_year) = _parse_title(attrs[1][1])
+                if end_year is not None:
+                    self.attrs['end_year'] = end_year
         elif tag == 'div':
             # Check if we are in the poster <div> element
             for a in attrs:
                 if a == ('class', 'poster'):
                     self._in_poster = True
+                elif a == ('class', 'seasons-and-year-nav'):
+                    self._in_seasons = True
         elif tag == 'img' and self._in_poster:
             # When in poster, img contains the link to the poster image
             for a in attrs:
                 if a[0] == 'src':
-                    self.attrs['poster_url'] = a[1]
+                    self.attrs['poster_url_small'] = a[1]
+        elif tag == 'a' and self._in_seasons:
+            for a in attrs:
+                if a[0] == 'href':
+                    m = _RE_SEASON.match(a[1])
+                    if m is not None:
+                        if 'seasons' not in self.attrs:
+                            self.attrs['seasons'] = {}
+                        self.attrs['seasons'][m.group('season')] = {}
 
     def handle_data(self, data):
         if self._in_db:
             db = json.loads(data)
             # The description may be missing
-            self.attrs['plot'] = db.get('description', 'No description.')
-            self.attrs['genre'] = db.get('genre', ['Unknown'])
-            self.attrs['duration'] = None
+            try:
+                self.attrs['plot'] = db['description']
+            except KeyError: pass
+            try:
+                self.attrs['poster_url'] = db['image']
+            except KeyError: pass
+            try:
+                self.attrs['genre'] = db['genre']
+            except KeyError: pass
             try:
                 m = _RE_DURATION.match(db['duration'])
                 if m is not None:
@@ -214,14 +241,14 @@ class TitleParser(html.parser.HTMLParser):
             # The rating may be missing
             try:
                 self.attrs['rating'] = db['aggregateRating']['ratingValue']
-            except KeyError:
-                self.attrs['rating'] = None
+            except KeyError: pass
 
     def handle_endtag(self, tag):
         if tag == 'script':
             self._in_db = False
         elif tag == 'div':
             self._in_poster = False
+            self._in_seasons = False
 
 
 class SeasonParser(html.parser.HTMLParser):
@@ -251,7 +278,7 @@ class SeasonParser(html.parser.HTMLParser):
         self.episodes = {}
         # Holds a dictionary with all the seasons (only one season is requested
         # at a time, but is for easy integration with the IMDBTitle object).
-        self.attrs = {'seasons': {str(season): self.episodes}}
+        self.attrs = {str(season): self.episodes}
         # True if we are inside the <div> element that contains the airdate
         self._in_airdate = False
         # True if we are inside the <div> element which is the top level rating
@@ -361,22 +388,31 @@ class IMDBTitle(object):
         # Fetch the title page
         url = _IMDB_TITLE_URL.format(self.id)
         http_client = tornado.httpclient.AsyncHTTPClient()
+        logging.info('fetching {}...'.format(url))
         response = await http_client.fetch(url, headers=_HTTP_HEADERS)
+        logging.info('received {}'.format(url))
         # Parse the important information
         parser = TitleParser()
         parser.feed(response.body.decode('utf-8'))
         self._attrs.update(parser.attrs)
+        # Fetch season information, if it has any seasons
+        try:
+            for s in self._attrs['seasons'].keys():
+                self._fetch_season(s)
+        except KeyError: pass
 
-    async def fetch_season(self, season):
+    async def _fetch_season(self, season):
         '''Obtain a given season's episodes descriptions.'''
         # Fetch the title page
         url = _IMDB_SEASON_URL.format(self.id, season)
         http_client = tornado.httpclient.AsyncHTTPClient()
+        logging.info('fetching {}...'.format(url))
         response = await http_client.fetch(url, headers=_HTTP_HEADERS)
+        logging.info('received {}'.format(url))
         # Parse the important information
         parser = SeasonParser(season)
         parser.feed(response.body.decode('utf-8'))
-        self._attrs.update(parser.attrs)
+        self._attrs['seasons'].update(parser.attrs)
 
 
 async def search(title, title_types, year=None):
@@ -395,7 +431,9 @@ async def search(title, title_types, year=None):
 
     # Fetch the list of titles
     http_client = tornado.httpclient.AsyncHTTPClient()
+    logging.info('fetching {}...'.format(url))
     response = await http_client.fetch(url, headers=_HTTP_HEADERS)
+    logging.info('received {}'.format(url))
 
     # Parse the desired information from the result
     parser = SearchParser()
