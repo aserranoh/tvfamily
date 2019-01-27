@@ -48,8 +48,13 @@ _SEARCH_TYPES = ['TV Series', 'Short', 'TV Episode', 'Video', 'TV Movie',
 _RE_SEARCH_TYPE = re.compile(r'\(({})\)'.format('|'.join(_SEARCH_TYPES)))
 # Add 'Movie' as search type (in IMDB movies don't have explicit type)
 _SEARCH_TYPES.append('Movie')
-_RE_TITLE = re.compile(r'(?P<title>.*?)\s*'
-    r'(\(.*?(?P<air_year>\d{4})(–(?P<end_year>\d{4}|\s*))?\))?$')
+_RE_TITLE = re.compile(r'''
+    (?P<title> .*? ) \s+
+    \( (?P<type> .*? ) \s*
+    (?P<air_year> \d{4} )
+    ( – (?P<end_year> \d{4} | \s* ) )?
+    \) $
+    ''', re.X)
 _RE_DURATION = re.compile(r'PT(?P<h>\d+)H(?P<m>\d+)M')
 _RE_SEASON = re.compile(r'/title/[^/]+/episodes\?season=(?P<season>\d+)')
 
@@ -194,8 +199,9 @@ class TitleParser(html.parser.HTMLParser):
             in_title = False
             if attrs[0] == ('property', 'og:title'):
                 # Get the air and end years contained in the title
-                (self.attrs['title'], self.attrs['air_year'],
+                (self.attrs['title'], type_, self.attrs['air_year'],
                     end_year) = _parse_title(attrs[1][1])
+                self.attrs['type'] = type_ if type_ else 'Movie'
                 if end_year is not None:
                     self.attrs['end_year'] = end_year
         elif tag == 'div':
@@ -203,14 +209,12 @@ class TitleParser(html.parser.HTMLParser):
             for a in attrs:
                 if a == ('class', 'poster'):
                     self._in_poster = True
-                elif a == ('class', 'seasons-and-year-nav'):
-                    self._in_seasons = True
         elif tag == 'img' and self._in_poster:
             # When in poster, img contains the link to the poster image
             for a in attrs:
                 if a[0] == 'src':
                     self.attrs['poster_url_small'] = a[1]
-        elif tag == 'a' and self._in_seasons:
+        elif tag == 'a':
             for a in attrs:
                 if a[0] == 'href':
                     m = _RE_SEASON.match(a[1])
@@ -380,6 +384,9 @@ class IMDBTitle(object):
     def __getitem__(self, attr):
         return self._attrs[attr]
 
+    def __contains__(self, attr):
+        return attr in self._attrs
+
     def __hash__(self):
         return hash(self.id)
 
@@ -398,7 +405,7 @@ class IMDBTitle(object):
         # Fetch season information, if it has any seasons
         try:
             for s in self._attrs['seasons'].keys():
-                self._fetch_season(s)
+                await self._fetch_season(s)
         except KeyError: pass
 
     async def _fetch_season(self, season):

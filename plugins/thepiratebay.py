@@ -1,7 +1,7 @@
 
 '''thepiratebay.py - API to the site ThePirateBay.
 
-Copyright 2018 Antonio Serrano Hernandez
+Copyright 2018 2019 Antonio Serrano Hernandez
 
 This file is part of tvfamily.
 
@@ -22,6 +22,7 @@ along with tvfamily; see the file COPYING.  If not, see
 
 import html.parser
 import logging
+import random
 import re
 import tornado.gen
 import tornado.httpclient
@@ -30,7 +31,7 @@ import urllib.parse
 import tvfamily.torrent
 
 __author__ = 'Antonio Serrano Hernandez'
-__copyright__ = 'Copyright (C) 2018 Antonio Serrano Hernandez'
+__copyright__ = 'Copyright (C) 2018 2019 Antonio Serrano Hernandez'
 __version__ = '0.1'
 __license__ = 'GPL'
 __maintainer__ = 'Antonio Serrano Hernandez'
@@ -77,17 +78,17 @@ class TorrentsListParser(html.parser.HTMLParser):
         elif tag == 'a' and self._in_column and self._column == 1:
             # We are in the second column. The <a> element can contain the
             # title of the torrent or its magnet link (not always present).
-            # Reset the magnet link to None in case is not present.
-            self._magnet = None
             for a in attrs:
-                if a == ('class', 'detLink'):
+                if a[0] == 'href':
+                    href = a[1]
+                elif a == ('class', 'detLink'):
                     # This class of <a> element denotes the title. Signal that
                     # we are in the title (the actual title is in the data).
                     self._in_title = True
-                elif a[0] == 'href' and a[1].startswith('magnet:'):
-                    # If the href of this <a> element starts with 'magnet'
-                    # it denotes the magnet link.
-                    self._magnet = a[1]
+                elif a[0] == 'title' and 'magnet' in a[1]:
+                    # This <a> element denotes the magnet link
+                    # (may not be an actual magnet link).
+                    self._magnet = href
         elif tag == 'font' and self._in_column and self._column == 1:
             for a in attrs:
                 if a == ('class', 'detDesc'):
@@ -133,14 +134,38 @@ class TorrentsListParser(html.parser.HTMLParser):
             self._in_description = False
 
 
+class TorrentPageParser(html.parser.HTMLParser):
+    '''Parse the TPB page that contains the description of a torrent.'''
+
+    def __init__(self):
+        super(TorrentPageParser, self).__init__()
+
+    def handle_starttag(self, tag, attrs):
+        if tag == 'a':
+            for a in attrs:
+                if a[0] == 'href':
+                    href = a[1]
+                elif a == ('title', 'Get this torrent'):
+                    self.magnet = href
+
+    def handle_data(self, data):
+        pass
+
+    def handle_endtag(self, tag):
+        pass
+
+
 async def top(category, options):
     '''Search ThePirateBay site for the top videos.'''
     http_client = tornado.httpclient.AsyncHTTPClient()
+    server = _get_server(options)
     torrents = []
-    urls = ['{}/top/{}'.format(options['plugins']['thepiratebay']['url'], c)
+    urls = ['{}/top/{}'.format(server, c)
         for c in _TPB_CATEGORIES[category]]
-    contents = await tornado.gen.multi([
-        http_client.fetch(url, headers=_HTTP_HEADERS) for url in urls])
+    logging.info('fetching top {}...'.format(category))
+    contents = await tornado.gen.multi([_request(http_client, url)
+        for url in urls])
+    logging.info('received top {}'.format(category))
     # Parse the important information
     for c in contents:
         parser = TorrentsListParser()
@@ -148,15 +173,48 @@ async def top(category, options):
         torrents.extend(parser.torrents)
     return torrents
 
-async def search(title, options):
-    '''Search ThePirateBay for a given title.'''
+def _get_server(options):
+    '''Return a server to use.'''
+    return random.choice(options['plugins']['thepiratebay']['urls'])
+
+async def _request(http_client, url):
+    '''Make a request and control the 429 error.'''
+    while 1:
+        try:
+            result = await http_client.fetch(url, headers=_HTTP_HEADERS)
+            break
+        except tornado.httpclient.HTTPError as e:
+            if e.code != 429:
+                raise
+            else:
+                await tornado.gen.sleep(int(e.response.headers['Retry-After']))
+    return result
+
+async def search(query, options):
+    '''Search ThePirateBay for a given query.'''
     http_client = tornado.httpclient.AsyncHTTPClient()
-    query_params = {'q': title, 'video': 'on', 'page': '0', 'orderby': '99'}
-    url = '{}/s/?{}'.format(options['plugins']['thepiratebay']['url'],
-        urllib.parse.urlencode(query_params))
-    contents = await http_client.fetch(url, headers=_HTTP_HEADERS)
+    server = _get_server(options)
+    query_params = {'q': query, 'video': 'on', 'page': '0', 'orderby': '99'}
+    url = '{}/s/?{}'.format(server, urllib.parse.urlencode(query_params))
+    logging.info('fetching url {}...'.format(url))
+    contents = await _request(http_client, url)
+    logging.info('received url {}'.format(url))
     # Parse the important information
     parser = TorrentsListParser()
     parser.feed(contents.body.decode('utf-8'))
+    await tornado.gen.multi([_fetch_torrent_info(server, t)
+        for t in parser.torrents if not t.magnet.startswith('magnet')])
     return parser.torrents
+
+async def _fetch_torrent_info(server, torrent):
+    '''Fetch the torrent info page.'''
+    http_client = tornado.httpclient.AsyncHTTPClient()
+    url = server + torrent.magnet
+    logging.info('fetching url {}...'.format(url))
+    contents = await _request(http_client, url)
+    logging.info('received url {}'.format(url))
+    # Parse the important information
+    parser = TorrentPageParser()
+    parser.feed(contents.body.decode('utf-8'))
+    torrent.magnet = parser.magnet
 

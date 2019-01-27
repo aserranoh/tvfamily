@@ -1,7 +1,7 @@
 
 '''torrent.py - Common Torrent objects.
 
-Copyright 2018 Antonio Serrano Hernandez
+Copyright 2018 2019 Antonio Serrano Hernandez
 
 This file is part of tvfamily.
 
@@ -23,7 +23,7 @@ along with tvfamily; see the file COPYING.  If not, see
 import tvfamily.PTN
 
 __author__ = 'Antonio Serrano Hernandez'
-__copyright__ = 'Copyright (C) 2018 Antonio Serrano Hernandez'
+__copyright__ = 'Copyright (C) 2018 2019 Antonio Serrano Hernandez'
 __version__ = '0.1'
 __license__ = 'GPL'
 __maintainer__ = 'Antonio Serrano Hernandez'
@@ -41,16 +41,10 @@ class Torrent(object):
         self.size = size
         self.seeders = seeders
         self.leechers = leechers
-        self._name_info = None
-
-    @property
-    def name_info(self):
-        if self._name_info is None:
-            self._name_info = tvfamily.PTN.parse(self.name)
-        return self._name_info
+        self.name_info = tvfamily.PTN.parse(self.name)
 
     def todict(self):
         '''Return a dictionary with the elements of this instance.'''
-        return {'name': self.name, 'seeders': self.seeders,
-            'leechers': self.leechers}
+        return {'name': self.name, 'magnet': self.magnet, 'size': self.size,
+            'seeders': self.seeders, 'leechers': self.leechers}
 

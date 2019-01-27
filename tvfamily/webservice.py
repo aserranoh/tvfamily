@@ -140,6 +140,23 @@ class GetTitleHandler(tvfamily.webcommon.BaseHandler):
         except (tornado.web.MissingArgumentError, KeyError) as e:
             self.write_error(msg=str(e))
 
+class GetMediaStatusHandler(tvfamily.webcommon.BaseHandler):
+
+    def get(self):
+        try:
+            title_id = self.get_query_argument('id')
+            season = episode = None
+            try:
+                season = int(self.get_query_argument('season'))
+                episode = int(self.get_query_argument('episode'))
+            except tornado.web.MissingArgumentError:
+                pass
+            status = self._core.get_media_status(
+                title_id, season, episode)
+            self.write_json(status=status.todict())
+        except (tornado.web.MissingArgumentError, KeyError) as e:
+            self.write_error(msg=str(e))
+
 class WebService(object):
     '''Represents the web service API.'''
 
@@ -157,5 +174,6 @@ class WebService(object):
             (r'/api/getcategories', GetCategoriesHandler, d),
             (r'/api/gettop', GetTopHandler, d),
             (r'/api/gettitle', GetTitleHandler, d),
+            (r'/api/getmediastatus', GetMediaStatusHandler, d),
         ]
 
