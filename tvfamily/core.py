@@ -701,10 +701,12 @@ class Title(object):
 
     def todict(self):
         '''Return a dictionary with some of the attributes of this instance.'''
-        return {'title': self.get_title(), 'title_id': self.imdb_title.id,
+        d = {'title': self.get_title(), 'title_id': self.imdb_title.id,
             'poster_url': self.get_poster_url(), 'rating': self.get_rating(),
             'air_year': self.get_air_year(), 'end_year': self.get_end_year(),
             'genre': self.get_genre(), 'plot': self.get_plot()}
+        d.update(self.type.todict())
+        return d
 
 
 class TVSerie(object):
@@ -750,6 +752,15 @@ class TVSerie(object):
         if self._episodes is None:
             self._add_episodes()
         return sorted(self._episodes.keys())"""
+
+    def todict(self):
+        # Add season and episode number fields to each episode
+        seasons = self.title.imdb_title['seasons']
+        for sn, episodes in seasons.items():
+            for en, e in episodes.items():
+                e['season'] = int(sn)
+                e['episode'] = int(en)
+        return {'seasons': self.title.imdb_title['seasons']}
 
 
 class Episode(object):
@@ -801,6 +812,9 @@ class Movie(object):
     def get_media(self, torrent):
         '''Return itself.'''
         return self.title
+
+    def todict(self):
+        return {}
 
     """def get_duration(self):
         return self._imdb_title['duration']

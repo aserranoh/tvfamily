@@ -64,6 +64,7 @@ def _parse_title(data):
     m = _RE_TITLE.search(data)
     if m:
         title = m.group('title')
+        type_ = m.group('type')
         air_year = m.group('air_year')
         if air_year is not None:
             air_year = int(air_year)
@@ -73,7 +74,7 @@ def _parse_title(data):
                 end_year = int(end_year)
             else:
                 end_year = 0
-    return title, air_year, end_year
+    return title, type_, air_year, end_year
 
 
 class SearchParser(html.parser.HTMLParser):
