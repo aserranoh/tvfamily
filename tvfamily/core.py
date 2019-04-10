@@ -137,11 +137,11 @@ class Core(object):
         '''Return the picture for the given profile.'''
         return self._profiles_manager.get_profile_picture(name)
 
-    def set_profile_picture(self, name, picture):
+    def set_profile_picture(self, name, picture=None):
         '''Set a new profile picture for the given profile.'''
         self._profiles_manager.set_profile_picture(name, picture)
 
-    def create_profile(self, name, picture):
+    def create_profile(self, name, picture=None):
         '''Create a new profile.'''
         self._profiles_manager.create_profile(name, picture)
 
@@ -176,7 +176,8 @@ class Core(object):
         if self._titles_db.has_file(imdb_id, season, episode):
             return MediaStatus(MediaStatus.DOWNLOADED)
         else:
-            status = self._torrent_engine.get_status(imdb_id, season, episode)
+            status = self._torrent_engine.get_file_status(
+                imdb_id, season, episode)
             if status:
                 return status
             else:
@@ -202,16 +203,15 @@ class Core(object):
 
     # Video related methods
 
+    def get_video(self, imdb_id, season=None, episode=None):
+        '''Return a Video object from a title_id.'''
+        return self._titles_db.get_video(imdb_id, season, episode)
+
     """async def get_video_from_media(self, media):
         '''Search a video in the local machine corresponding to this media
         (a movie or a tv episode).
         '''
-        return (await self._titles_db.get_video_from_media(media))
-
-    def get_video_from_file(self, video_file):
-        '''Return a Video object from a video file.'''
-        # TODO: check that the video exists!
-        return Video(video_file)"""
+        return (await self._titles_db.get_video_from_media(media))"""
 
 
 class ProfilesManager(object):
@@ -266,7 +266,7 @@ class ProfilesManager(object):
         except IOError:
             return None
 
-    def set_profile_picture(self, name, picture):
+    def set_profile_picture(self, name, picture=None):
         '''Set a new picture for the given profile.'''
         if name not in self._profiles:
             raise KeyError("profile '{}' not found".format(name))
@@ -279,10 +279,10 @@ class ProfilesManager(object):
         else:
             self._save_profile_picture(name, picture)
 
-    def create_profile(self, name, picture):
+    def create_profile(self, name, picture=None):
         '''Create a new profile with the given name.'''
         if name not in self._profiles:
-            if picture != b'':
+            if picture:
                 self._save_profile_picture(name, picture)
             self._profiles[name] = UserProfile(name)
             self._save()
@@ -371,6 +371,9 @@ class TitlesDB(object):
     # Name of the IMDBTitle database files
     TITLE_DB_FILE = 'db.json'
 
+    # Accepted videos
+    VIDEO_EXTENSIONS = ['mp4']
+
     def __init__(self, categories, videos_path, data_path):
         self._categories = dict((c.name, c) for c in categories)
         self._root_path = videos_path
@@ -434,7 +437,10 @@ class TitlesDB(object):
             # Fetch the IMDB data from the title
             await imdb_title.fetch()
             # Save the dbs to disk
-            self._save_imdb_title(imdb_title)
+            title_path = self._get_title_path(imdb_title.id)
+            self._save_imdb_title(imdb_title, title_path)
+            # Fetch the poster and still images
+            await imdb_title.fetch_pictures(title_path)
         return imdb_title
 
     async def _get_title_from_torrent(self, torrent, category):
@@ -467,9 +473,8 @@ class TitlesDB(object):
             attrs = json.loads(f.read())
         return tvfamily.imdb.IMDBTitle(imdb_id, attrs)
 
-    def _save_imdb_title(self, imdb_title):
+    def _save_imdb_title(self, imdb_title, title_path):
         '''Save the IMDB info to disk.'''
-        title_path = self._get_title_path(imdb_title.id)
         if not os.path.exists(title_path):
             os.mkdir(title_path)
         db_path = os.path.join(title_path, self.TITLE_DB_FILE)
@@ -530,27 +535,37 @@ class TitlesDB(object):
         self._save_torrents_to_imdb()
         self._save_titles_not_found()
 
-    def has_file(self, title_id, season=None, episode=None):
+    def has_video(self, title_id, season=None, episode=None):
         '''Return True if the file for this media is downloaded.'''
-        path = self._get_title_path(title_id)
-        videos_wilcard = '*.{}'.format(','.join[self.VIDEO_EXTENSIONS])
-        videos = glob.glob(os.path.join(path, videos_wilcard))
-        if videos:
-            if season is None or episode is None:
-                has_video = True
+        return self.get_video(title_id, season, episode) is not None
+
+    def get_video(self, imdb_id, season=None, episode=None):
+        '''Return the video in the local machine, if any, for this media.'''
+        path = self._get_title_path(imdb_id)
+        if os.path.exists(path):
+            if len(self.VIDEO_EXTENSIONS) == 1:
+                videos_wilcard = '*.{}'.format(self.VIDEO_EXTENSIONS[0])
             else:
-                has_video = False
-                for v in videos:
-                    info = tvfamily.PTN.parse(os.path.basename(v))
-                    try:
-                        s, e = info['season'], info['episode']
-                        has_video = (s == season and e == episode)
-                        break
-                    except KeyError:
-                        pass
+                videos_wilcard = '*.{{{}}}'.format(
+                    ','.join[self.VIDEO_EXTENSIONS])
+            videos = glob.glob(os.path.join(path, videos_wilcard))
+            video = None
+            if videos:
+                if season is None or episode is None:
+                    video = Video(videos[0])
+                else:
+                    for v in videos:
+                        info = tvfamily.PTN.parse(os.path.basename(v))
+                        try:
+                            s, e = info['season'], info['episode']
+                            if s == season and e == episode:
+                                video = Video(v)
+                                break
+                        except KeyError:
+                            pass
         else:
-            has_video = False
-        return has_video
+            raise KeyError('Unknown media')
+        return video
 
     """async def search(self, title, category):
         '''Search titles by name in IMDB.'''
@@ -558,43 +573,24 @@ class TitlesDB(object):
         results = await tvfamily.imdb.search(title, category.imdb_type)
         titles = [category.get_title(x) for x in results]
         await tornado.gen.multi([t.fetch() for t in titles])
-        return titles
-
-    async def get_video_from_media(self, media):
-        '''Return the video in the local machine, if any, for this media.'''
-        # Get the list of all the videos that may correspond to this media
-        paths = media.get_all_videos_paths()
-        for p in paths:
-            # For each path, get its IMDB title
-            torrent = tvfamily.torrent.Torrent(os.path.basename(p))
-            t = await self._get_title_from_torrent(
-                torrent, media.title.category)
-            if (t is not None
-                    and t._imdb_title.id == media.title._imdb_title.id):
-                return media.get_video(p)
-        return None"""
+        return titles"""
 
 
-"""class Video(object):
+class Video(object):
     '''Represents a video (movie or tv series episode).'''
 
     _CHUNK_SIZE = 64 * 1024
-    _EXTENSIONS = ['mp4']
-    '''_FFPROBE = ['ffprobe', '-v', 'error', '-show_entries',
-        'stream=codec_type,codec_name:stream_tags=language,title:'
-        'format=duration:format=duration', '-of', 'json']'''
 
     def __init__(self, path):
         self.path = path
-        self._container = None
 
-    @property
+    """@property
     def container(self):
         '''Return the video container.'''
         if not self._container:
             self._container = tvfamily.PTN.parse(
                 os.path.basename(self.path))['container']
-        return self._container
+        return self._container"""
 
     def get_content(self, start=None, end=None):
         '''Return an iterator that generates the bytes from this video,
@@ -618,15 +614,15 @@ class TitlesDB(object):
                     assert start + read == end
                     return
 
-    def get_mime_type(self):
+    """def get_mime_type(self):
         '''Return the mime type that corresponds to this video.'''
-        return 'video/{}'.format(self.container)
+        return 'video/{}'.format(self.container)"""
 
     def get_size(self):
         '''Return the size of this video file.'''
         return os.path.getsize(self.path)
 
-    def get_subtitles(self):
+    """def get_subtitles(self):
         '''Return the available subtitles for this video.'''
         filename = os.path.basename(self.path)
         basename = filename.rpartition('.')[0]
@@ -637,10 +633,10 @@ class TitlesDB(object):
     @classmethod
     def is_video(cls, path):
         '''Return True if the file in path corresponds to a video.'''
-        return path.rpartition('.')[-1] in cls._EXTENSIONS
+        return path.rpartition('.')[-1] in cls._EXTENSIONS"""
 
 
-class Subtitle(object):
+"""class Subtitle(object):
     '''Represents a subtitle for a video.'''
 
     def __init__(self, path, prefix_len):
@@ -667,9 +663,6 @@ class Title(object):
 
     def __hash__(self):
         return hash(self.imdb_title.id)
-
-    """def __str__(self):
-        return self.get_title()"""
 
     def get_air_year(self):
         return self.imdb_title['air_year']
@@ -1037,6 +1030,10 @@ class TorrentEngine(object):
         torrents.sort(key=lambda x: x.seeders, reverse=True)
         return torrents
 
+    def get_file_status(self, imdb_id, season=None, episode=None):
+        '''Return the downloading status of a file.'''
+        return None
+
 
 class TaskScheduler(object):
     '''Executes periodic tasks.'''
@@ -1080,8 +1077,4 @@ class TaskScheduler(object):
         await tornado.gen.multi(
             [self.titles_db.fetch_title_from_torrent(t, category)
             for t in torrents])
-
-    def get_file_status(self, imdb_id, season=None, episode=None):
-        '''Return the downloading status of a file.'''
-        pass
 

@@ -23,7 +23,9 @@ along with tvfamily; see the file COPYING.  If not, see
 import html.parser
 import json
 import logging
+import os
 import re
+import tornado.gen
 import tornado.httpclient
 import urllib.parse
 
@@ -53,7 +55,7 @@ _RE_TITLE = re.compile(r'''
     \( (?P<type> .*? ) \s*
     (?P<air_year> \d{4} )
     ( – (?P<end_year> \d{4} | \s* ) )?
-    \) $
+    \)
     ''', re.X)
 _RE_DURATION = re.compile(r'PT(?P<h>\d+)H(?P<m>\d+)M')
 _RE_SEASON = re.compile(r'/title/[^/]+/episodes\?season=(?P<season>\d+)')
@@ -421,6 +423,55 @@ class IMDBTitle(object):
         parser = SeasonParser(season)
         parser.feed(response.body.decode('utf-8'))
         self._attrs['seasons'].update(parser.attrs)
+
+    async def fetch_pictures(self, dest):
+        '''Fetch the poster and stills of this title and store them to dest.'''
+        await tornado.gen.multi(
+            [self._fetch_posters(dest), self._fetch_stills(dest)])
+
+    async def _fetch_posters(self, dest):
+        try:
+            # Try to fetch the big poster
+            url = self._attrs['poster_url']
+            await self._fetch_picture_and_store(url, dest)
+        except tornado.curl_httpclient.CurlError as e:
+            # Error, fetch the small poster
+            logging.info('FAILED {}'.format(url))
+            logging.info(str(e))
+            url = self._attrs['poster_url_small']
+            await self._fetch_picture_and_store(url, dest)
+
+    async def _fetch_stills(self, dest):
+        urls = []
+        # Add the episodes stills
+        try:
+            for season_number, season in self._attrs['seasons'].items():
+                for episode_number, episode in season.items():
+                    urls.append(episode['still'])
+        except KeyError: pass
+        # Fetch everything
+        await tornado.gen.multi([self._fetch_picture_and_store(url, dest)
+            for url in urls])
+
+    async def _fetch_picture_and_store(self, url, dest):
+        '''Fetch a picture from the url and store it in dest.'''
+        path = os.path.join(dest, url.rpartition('/')[-1])
+        if not os.path.exists(path):
+            http_client = tornado.httpclient.AsyncHTTPClient()
+            logging.info('fetching {}...'.format(url))
+            try:
+                with open(path, 'wb') as f:
+                    def on_chunk(chunk):
+                        f.write(chunk)
+                    await http_client.fetch(url, headers=_HTTP_HEADERS,
+                        streaming_callback=on_chunk)
+                logging.info('RECEIVED {}'.format(path))
+            except tornado.curl_httpclient.CurlError:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+                raise
 
 
 async def search(title, title_types, year=None):

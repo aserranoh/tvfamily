@@ -64,6 +64,19 @@ class GetProfilePictureHandler(tvfamily.webcommon.BaseHandler):
 class SetProfilePictureHandler(tvfamily.webcommon.BaseHandler):
     '''Set the picture for the given profile.'''
 
+    def get(self):
+        try:
+            name = self.get_query_argument('name')
+            try:
+                self._core.set_profile_picture(name)
+                self.write_json(code=0)
+            except (KeyError) as e:
+                self.write_error(msg=str(e))
+        except tornado.web.MissingArgumentError:
+            self.write_error(msg="missing 'name' argument")
+        except KeyError:
+            self.write_error(msg='malformed request')
+
     def post(self):
         try:
             name = self.get_query_argument('name')
@@ -80,6 +93,16 @@ class SetProfilePictureHandler(tvfamily.webcommon.BaseHandler):
 
 class CreateProfileHandler(tvfamily.webcommon.BaseHandler):
     '''Create a new profile.'''
+
+    def get(self):
+        try:
+            name = self.get_query_argument('name')
+            self._core.create_profile(name)
+            self.write_json(code=0)
+        except tornado.web.MissingArgumentError:
+            self.write_error(msg="missing 'name' argument")
+        except ValueError as e:
+            self.write_error(msg=str(e))
 
     def post(self):
         try:
@@ -157,6 +180,74 @@ class GetMediaStatusHandler(tvfamily.webcommon.BaseHandler):
         except (tornado.web.MissingArgumentError, KeyError) as e:
             self.write_error(msg=str(e))
 
+class GetVideoHandler(tvfamily.webcommon.BaseHandler):
+    '''Serves a video in chunks.'''
+
+    def compute_etag(self):
+        return None
+
+    @classmethod
+    def get_content_version(cls, abspath):
+        return 1
+
+    @classmethod
+    def _get_cached_version(cls, abs_path):
+        return None
+
+    async def get(self):
+        # Obtain the video to play
+        try:
+            title_id = self.get_query_argument('id')
+            season = episode = None
+            try:
+                season = int(self.get_query_argument('season'))
+                episode = int(self.get_query_argument('episode'))
+            except tornado.web.MissingArgumentError:
+                pass
+            video = self._core.get_video(title_id, season, episode)
+        except (tornado.web.MissingArgumentError, KeyError) as e:
+            self.write_error(msg=str(e))
+            return
+        request_range = None
+        range_header = self.request.headers.get('Range')
+        size = video.get_size()
+        # Obtain the start, end and total size of the range to serve
+        if range_header:
+            # As per RFC 2616 14.16, if an invalid Range header is specified,
+            # the request will be treated as if the header didn't exist.
+            request_range = tornado.httputil._parse_request_range(range_header)
+        if request_range:
+            start, end = request_range
+            if (start is not None and start >= size) or end == 0:
+                # As per RFC 2616 14.35.1, a range is not satisfiable only: if
+                # the first requested byte is equal to or greater than the
+                # content, or when a suffix with length 0 is specified
+                self.set_status(416)  # Range Not Satisfiable
+                self.set_header("Content-Type", "text/plain")
+                self.set_header("Content-Range", "bytes */%s" % (size, ))
+                return
+            if start is not None and start < 0:
+                start += size
+            if end is not None and end > size:
+                # Clients sometimes blindly use a large range to limit their
+                # download size; cap the endpoint at the actual file size.
+                end = size
+            self.set_status(206)
+            self.set_header('Content-Range',
+                tornado.httputil._get_content_range(start, end, size))
+        else:
+            start = end = None
+        self.set_header('Content-Type', 'video/mp4')
+        self.set_header('Accept-Ranges', 'bytes')
+        self.set_header('Content-Length', str(size))
+        # Serve the content
+        content = video.get_content(start, end)
+        for chunk in content:
+            self.write(chunk)
+            try:
+                await self.flush()
+            except tornado.iostream.StreamClosedError: pass
+
 class WebService(object):
     '''Represents the web service API.'''
 
@@ -175,5 +266,6 @@ class WebService(object):
             (r'/api/gettop', GetTopHandler, d),
             (r'/api/gettitle', GetTitleHandler, d),
             (r'/api/getmediastatus', GetMediaStatusHandler, d),
+            (r'/api/getvideo', GetVideoHandler, d),
         ]
 
