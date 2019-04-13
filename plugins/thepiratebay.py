@@ -20,7 +20,7 @@ along with tvfamily; see the file COPYING.  If not, see
 <http://www.gnu.org/licenses/>.
 '''
 
-import html.parser
+from bs4 import BeautifulSoup
 import logging
 import random
 import re
@@ -42,7 +42,7 @@ __homepage__ = 'https://github.com/aserranoh/tvfamily'
 
 _TPB_CATEGORIES = {
     # TV Shows: 205, HD TV Shows: 208
-    'TV Series': [205, 208],
+    'TV Series': [205],
     # Movies: 201, Movies DVDR: 202, HD Movies: 207
     'Movies': [201, 207],
 }
@@ -50,95 +50,37 @@ _RE_SIZE = re.compile(r'Size ([\d.]+.*?[MG]iB)')
 _HTTP_HEADERS = {'Accept-Language': 'en-US'}
 
 
-class TorrentsListParser(html.parser.HTMLParser):
+class TorrentsListParser():
     '''Parse the TPB page that contains the top 100 torrents.'''
 
-    def __init__(self):
-        super(TorrentsListParser, self).__init__()
-        # True if we are inside a <td> element
-        self._in_column = False
-        # True if we are in the <a> element that contains the title of the
-        # torrent
-        self._in_title = False
-        # True if we are in the <font> element that contains the description
-        self._in_description = False
-        # Temporary holds the title of the torrent
-        self._title = None
-        # Resulting list of torrents
-        self.torrents = []
-
-    def handle_starttag(self, tag, attrs):
-        if tag == 'tr':
-            # New row of the table that contains the torrents. Reset the column
-            # counter to 0.
-            self._column = 0
-        elif tag == 'td':
-            # A cell in the table. Signal that we are in a <td> element.
-            self._in_column = True
-        elif tag == 'a' and self._in_column and self._column == 1:
-            # We are in the second column. The <a> element can contain the
-            # title of the torrent or its magnet link (not always present).
-            for a in attrs:
-                if a[0] == 'href':
-                    href = a[1]
-                elif a == ('class', 'detLink'):
-                    # This class of <a> element denotes the title. Signal that
-                    # we are in the title (the actual title is in the data).
-                    self._in_title = True
-                elif a[0] == 'title' and 'magnet' in a[1]:
-                    # This <a> element denotes the magnet link
-                    # (may not be an actual magnet link).
-                    self._magnet = href
-        elif tag == 'font' and self._in_column and self._column == 1:
-            for a in attrs:
-                if a == ('class', 'detDesc'):
-                    # We are in the description
-                    self._in_description = True
-                    self._size = None
-                    break
-
-    def handle_data(self, data):
-        if self._in_title:
-            self._title = data
-        elif self._in_description and self._size is None:
-            # Don't update the description if it has already been filled
-            m = _RE_SIZE.search(data)
-            if m is not None:
-                self._size = m.group(1)
-        elif self._in_column:
-            # Columns 2 and 3 simply has the number of seeders and leechers
-            # in its data field.
-            if self._column == 2:
-                self._seeders = int(data)
-            elif self._column == 3:
-                self._leechers = int(data)
-
-    def handle_endtag(self, tag):
-        if tag == 'tr':
-            # If a title was found, add a new torrent to the resulting list.
-            if self._title is not None:
-                self.torrents.append(tvfamily.torrent.Torrent(self._title,
-                    self._magnet, self._size, self._seeders, self._leechers))
-            # Reset the state variables when the row is finished.
-            self._title = None
-            self._size = None
-            self._column = 0
-        elif tag == 'td':
-            # When a column is finished, signal it in the in_column state
-            # variable and increment the column counter.
-            self._in_column = False
-            self._column += 1
-        elif tag == 'a':
-            self._in_title = False
-        elif tag == 'font':
-            self._in_description = False
+    def parse(self, html_doc):
+        torrents = []
+        soup = BeautifulSoup(html_doc, 'html.parser')
+        main_content = soup.find(name='div', id='main-content')
+        for tr in main_content.table.find_all('tr'):
+            cols = tr.find_all('td')
+            if len(cols) == 4:
+                # Title
+                a = cols[1].a
+                title = str(a.string)
+                # Magnet (its actually the link to the media page)
+                magnet = a['href']
+                # Size of the media
+                size = None
+                m = _RE_SIZE.search(str(cols[1].find('font').contents[0]))
+                if m is not None:
+                    size = m.group(1)
+                # Seeders and leechers
+                seeders = int(cols[2].string)
+                leechers = int(cols[3].string)
+                # Append the Torrent
+                torrents.append(tvfamily.torrent.Torrent(
+                    title, magnet, size, seeders, leechers))
+        return torrents
 
 
-class TorrentPageParser(html.parser.HTMLParser):
+class TorrentPageParser():
     '''Parse the TPB page that contains the description of a torrent.'''
-
-    def __init__(self):
-        super(TorrentPageParser, self).__init__()
 
     def handle_starttag(self, tag, attrs):
         if tag == 'a':
@@ -169,8 +111,9 @@ async def top(category, options):
     # Parse the important information
     for c in contents:
         parser = TorrentsListParser()
-        parser.feed(c.body.decode('utf-8'))
-        torrents.extend(parser.torrents)
+        torrents.extend(parser.parse(c.body.decode('utf-8')))
+    #for t in torrents:
+    #    print(t)
     return torrents
 
 def _get_server(options):

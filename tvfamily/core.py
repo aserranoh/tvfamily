@@ -435,12 +435,12 @@ class TitlesDB(object):
         imdb_title = await self._get_title_from_torrent(torrent, category)
         if imdb_title is not None:
             # Fetch the IMDB data from the title
-            await imdb_title.fetch()
-            # Save the dbs to disk
+            # title_path is the destination where to save the images
             title_path = self._get_title_path(imdb_title.id)
+            self._create_db_path(title_path)
+            await imdb_title.fetch(title_path)
+            # Save the dbs to disk
             self._save_imdb_title(imdb_title, title_path)
-            # Fetch the poster and still images
-            await imdb_title.fetch_pictures(title_path)
         return imdb_title
 
     async def _get_title_from_torrent(self, torrent, category):
@@ -473,10 +473,13 @@ class TitlesDB(object):
             attrs = json.loads(f.read())
         return tvfamily.imdb.IMDBTitle(imdb_id, attrs)
 
-    def _save_imdb_title(self, imdb_title, title_path):
-        '''Save the IMDB info to disk.'''
+    def _create_db_path(self, title_path):
+        '''Create the path to store the information of a title.'''
         if not os.path.exists(title_path):
             os.mkdir(title_path)
+
+    def _save_imdb_title(self, imdb_title, title_path):
+        '''Save the IMDB info to disk.'''
         db_path = os.path.join(title_path, self.TITLE_DB_FILE)
         try:
             with open(db_path, 'w') as f:

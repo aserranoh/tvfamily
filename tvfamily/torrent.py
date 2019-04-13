@@ -48,3 +48,7 @@ class Torrent(object):
         return {'name': self.name, 'magnet': self.magnet, 'size': self.size,
             'seeders': self.seeders, 'leechers': self.leechers}
 
+    def __str__(self):
+        return '{} {} {} {}'.format(
+            self.name, self.size, self.seeders, self.leechers)
+

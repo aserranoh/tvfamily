@@ -393,80 +393,84 @@ class IMDBTitle(object):
     def __hash__(self):
         return hash(self.id)
 
-    async def fetch(self):
+    async def fetch(self, dest):
         '''Obtain the remaining attributes from the title's main IMDB page.'''
         # Fetch the title page
         url = _IMDB_TITLE_URL.format(self.id)
         http_client = tornado.httpclient.AsyncHTTPClient()
-        logging.info('fetching {}...'.format(url))
         response = await http_client.fetch(url, headers=_HTTP_HEADERS)
-        logging.info('received {}'.format(url))
         # Parse the important information
         parser = TitleParser()
         parser.feed(response.body.decode('utf-8'))
         self._attrs.update(parser.attrs)
-        # Fetch season information, if it has any seasons
+        # Build a list with the seasons generators
         try:
-            for s in self._attrs['seasons'].keys():
-                await self._fetch_season(s)
-        except KeyError: pass
+            seasons = self._attrs['seasons']
+            generators = [self._fetch_season(s, dest) for s in seasons.keys()]
+        except KeyError:
+            generators = []
+        # Add the poster generator
+        generators.append(self._fetch_posters(dest))
+        # Fetch the list of generators
+        await tornado.gen.multi(generators)
 
-    async def _fetch_season(self, season):
+    async def _fetch_season(self, season, dest):
         '''Obtain a given season's episodes descriptions.'''
         # Fetch the title page
         url = _IMDB_SEASON_URL.format(self.id, season)
         http_client = tornado.httpclient.AsyncHTTPClient()
-        logging.info('fetching {}...'.format(url))
         response = await http_client.fetch(url, headers=_HTTP_HEADERS)
-        logging.info('received {}'.format(url))
         # Parse the important information
         parser = SeasonParser(season)
         parser.feed(response.body.decode('utf-8'))
         self._attrs['seasons'].update(parser.attrs)
+        # Fetch the episodes stills
+        await self._fetch_stills(season, dest)
 
-    async def fetch_pictures(self, dest):
-        '''Fetch the poster and stills of this title and store them to dest.'''
-        await tornado.gen.multi(
-            [self._fetch_posters(dest), self._fetch_stills(dest)])
+    async def _fetch_stills(self, season, dest):
+        s = self._attrs['seasons'][season]
+        urls = []
+        for e in s.values():
+            try:
+                urls.append(e['still'])
+            except KeyError:
+                pass
+        # Fetch the stills
+        await tornado.gen.multi([self._fetch_picture_and_store(url, dest)
+            for url in urls])
 
     async def _fetch_posters(self, dest):
         try:
             # Try to fetch the big poster
-            url = self._attrs['poster_url']
-            await self._fetch_picture_and_store(url, dest)
+            try:
+                url = self._attrs['poster_url']
+                await self._fetch_picture_and_store(url, dest)
+            except KeyError:
+                logging.info(
+                    '{} has no poster_url'.format(self._attrs['title']))
         except tornado.curl_httpclient.CurlError as e:
             # Error, fetch the small poster
-            logging.info('FAILED {}'.format(url))
+            logging.info('failed to fetch big poster for {}, '
+                'fetching the small one...'.format(self._attrs['title']))
             logging.info(str(e))
             url = self._attrs['poster_url_small']
             await self._fetch_picture_and_store(url, dest)
-
-    async def _fetch_stills(self, dest):
-        urls = []
-        # Add the episodes stills
-        try:
-            for season_number, season in self._attrs['seasons'].items():
-                for episode_number, episode in season.items():
-                    urls.append(episode['still'])
-        except KeyError: pass
-        # Fetch everything
-        await tornado.gen.multi([self._fetch_picture_and_store(url, dest)
-            for url in urls])
 
     async def _fetch_picture_and_store(self, url, dest):
         '''Fetch a picture from the url and store it in dest.'''
         path = os.path.join(dest, url.rpartition('/')[-1])
         if not os.path.exists(path):
             http_client = tornado.httpclient.AsyncHTTPClient()
-            logging.info('fetching {}...'.format(url))
             try:
                 with open(path, 'wb') as f:
                     def on_chunk(chunk):
                         f.write(chunk)
                     await http_client.fetch(url, headers=_HTTP_HEADERS,
                         streaming_callback=on_chunk)
-                logging.info('RECEIVED {}'.format(path))
-            except tornado.curl_httpclient.CurlError:
+            except tornado.curl_httpclient.CurlError as e:
+                logging.info('failed to fetch image for {}'.format(
+                    self._attrs['title']))
+                logging.info(str(e))
                 try:
                     os.unlink(path)
                 except OSError:
@@ -490,9 +494,7 @@ async def search(title, title_types, year=None):
 
     # Fetch the list of titles
     http_client = tornado.httpclient.AsyncHTTPClient()
-    logging.info('fetching {}...'.format(url))
     response = await http_client.fetch(url, headers=_HTTP_HEADERS)
-    logging.info('received {}'.format(url))
 
     # Parse the desired information from the result
     parser = SearchParser()
