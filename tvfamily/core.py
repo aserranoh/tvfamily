@@ -165,6 +165,10 @@ class Core(object):
         torrents = self._torrent_engine.top(category, filters)
         return self._titles_db.get_medias_from_torrents(torrents)
 
+    def get_poster(self, imdb_id):
+        '''Return the poster of a given title.'''
+        return self._titles_db.get_poster(imdb_id)
+
     def get_title(self, imdb_id):
         '''Return the title with the given imdb_id.'''
         return self._titles_db.get_title(imdb_id)
@@ -377,6 +381,7 @@ class TitlesDB(object):
     def __init__(self, categories, videos_path, data_path):
         self._categories = dict((c.name, c) for c in categories)
         self._root_path = videos_path
+        # Give the videos path to the Title class
         self._data_path = data_path
         self._load_torrents_to_imdb()
         self._load_titles_not_found()
@@ -520,6 +525,21 @@ class TitlesDB(object):
         except IOError:
             raise KeyError('title with imdb_id {} not found'.format(imdb_id))
 
+    def get_poster(self, imdb_id):
+        '''Return a file descriptor to the poster image for this title.'''
+        title = self.get_title(imdb_id)
+        title_path = os.path.join(self._root_path, title.imdb_title.id)
+        base_name = title.get_poster_url().rpartition('/')[-1]
+        try:
+            f = open(os.path.join(title_path, base_name), 'rb')
+        except IOError:
+            base_name = title.get_poster_url_small().rpartition('/')[-1]
+            try:
+                f = open(os.path.join(title_path, base_name), 'rb')
+            except IOError:
+                f = None
+        return f
+
     def _load_titles_not_found(self):
         '''Load the list of titles not found in IMDB.'''
         try:
@@ -651,6 +671,8 @@ class Video(object):
 class Title(object):
     '''Represents a title (a movie or tv series).'''
 
+    videos_path = None
+
     def __init__(self, imdb_title):
         self.imdb_title = imdb_title
         if self.imdb_title['type'] in Movie.TYPES:
@@ -689,6 +711,9 @@ class Title(object):
     def get_poster_url(self):
         return self.imdb_title['poster_url']
 
+    def get_poster_url_small(self):
+        return self.imdb_title['poster_url_small']
+
     def get_rating(self):
         return self.imdb_title['rating']
 
@@ -698,9 +723,9 @@ class Title(object):
     def todict(self):
         '''Return a dictionary with some of the attributes of this instance.'''
         d = {'title': self.get_title(), 'title_id': self.imdb_title.id,
-            'poster_url': self.get_poster_url(), 'rating': self.get_rating(),
-            'air_year': self.get_air_year(), 'end_year': self.get_end_year(),
-            'genre': self.get_genre(), 'plot': self.get_plot()}
+            'rating': self.get_rating(), 'air_year': self.get_air_year(),
+            'end_year': self.get_end_year(), 'genre': self.get_genre(),
+            'plot': self.get_plot()}
         d.update(self.type.todict())
         return d
 

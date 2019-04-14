@@ -152,6 +152,24 @@ class GetTopHandler(tvfamily.webcommon.BaseHandler):
                 tvfamily.core.CoreError, KeyError) as e:
             self.write_error(msg=str(e))
 
+class GetPosterHandler(tvfamily.webcommon.BaseHandler):
+    '''Return the poster of a given title.'''
+
+    def get(self):
+        try:
+            title_id = self.get_query_argument('id')
+            self.set_header('Content-Type', 'image/jpg')
+            pic = self._core.get_poster(title_id)
+            if pic is not None:
+                self.write(pic.read())
+                pic.close()
+            else:
+                self.write(b'')
+        except tornado.web.MissingArgumentError:
+            self.write_error(msg="missing 'id' argument")
+        except KeyError as e:
+            self.write_error(msg=str(e))
+
 class GetTitleHandler(tvfamily.webcommon.BaseHandler):
     '''Serve the title information.'''
 
@@ -264,6 +282,7 @@ class WebService(object):
             (r'/api/deleteprofile', DeleteProfileHandler, d),
             (r'/api/getcategories', GetCategoriesHandler, d),
             (r'/api/gettop', GetTopHandler, d),
+            (r'/api/getposter', GetPosterHandler, d),
             (r'/api/gettitle', GetTitleHandler, d),
             (r'/api/getmediastatus', GetMediaStatusHandler, d),
             (r'/api/getvideo', GetVideoHandler, d),
