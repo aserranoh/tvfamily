@@ -56,10 +56,10 @@ class GetProfilePictureHandler(tvfamily.webcommon.BaseHandler):
                 pic.close()
             else:
                 self.write(b'')
-        except tornado.web.MissingArgumentError:
-            self.write_error(msg="missing 'name' argument")
-        except KeyError as e:
-            self.write_error(msg=str(e))
+        except (tornado.web.MissingArgumentError, KeyError):
+            self.clear()
+            self.set_status(400)
+            self.finish('<html><body>Error</body></html>')
 
 class SetProfilePictureHandler(tvfamily.webcommon.BaseHandler):
     '''Set the picture for the given profile.'''
@@ -165,10 +165,10 @@ class GetPosterHandler(tvfamily.webcommon.BaseHandler):
                 pic.close()
             else:
                 self.write(b'')
-        except tornado.web.MissingArgumentError:
-            self.write_error(msg="missing 'id' argument")
-        except KeyError as e:
-            self.write_error(msg=str(e))
+        except (tornado.web.MissingArgumentError, KeyError):
+            self.clear()
+            self.set_status(400)
+            self.finish('<html><body>Error</body></html>')
 
 class GetTitleHandler(tvfamily.webcommon.BaseHandler):
     '''Serve the title information.'''
