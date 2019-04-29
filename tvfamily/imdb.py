@@ -50,22 +50,21 @@ _SEARCH_TYPES = ['TV Series', 'Short', 'TV Episode', 'Video', 'TV Movie',
 _RE_SEARCH_TYPE = re.compile(r'\(({})\)'.format('|'.join(_SEARCH_TYPES)))
 # Add 'Movie' as search type (in IMDB movies don't have explicit type)
 _SEARCH_TYPES.append('Movie')
-_RE_TITLE = re.compile(r'''
-    (?P<title> .*? ) \s+
-    \( (?P<type> .*? ) \s*
+_RE_TITLE_TYPE_YEAR = re.compile(r'''
+    \( (?: (?P<type> [a-zA-Z ]+? ) \s+ )?
     (?P<air_year> \d{4} )
-    ( – (?P<end_year> \d{4} | \s* ) )?
+    (?: – (?P<end_year> \d{4} | \s* ) )?
     \)
     ''', re.X)
+_RE_TITLE = re.compile(r'(?P<title>.*?) - IMDb')
 _RE_DURATION = re.compile(r'PT(?P<h>\d+)H(?P<m>\d+)M')
 _RE_SEASON = re.compile(r'/title/[^/]+/episodes\?season=(?P<season>\d+)')
 
 def _parse_title(data):
     '''Return the air and end year of a tv series.'''
-    air_year = end_year = None
-    m = _RE_TITLE.search(data)
+    air_year = end_year = type_ = None
+    m = _RE_TITLE_TYPE_YEAR.search(data)
     if m:
-        title = m.group('title')
         type_ = m.group('type')
         air_year = m.group('air_year')
         if air_year is not None:
@@ -76,6 +75,10 @@ def _parse_title(data):
                 end_year = int(end_year)
             else:
                 end_year = 0
+        title = data[:m.start()].strip()
+    else:
+        m = _RE_TITLE.match(data)
+        title = m.group('title')
     return title, type_, air_year, end_year
 
 
@@ -393,7 +396,10 @@ class IMDBTitle(object):
     def __hash__(self):
         return hash(self.id)
 
-    async def fetch(self, dest):
+    def get(self, attr, default=''):
+        return self._attrs.get(attr, '')
+
+    async def fetch(self, dest=None):
         '''Obtain the remaining attributes from the title's main IMDB page.'''
         # Fetch the title page
         url = _IMDB_TITLE_URL.format(self.id)
@@ -410,9 +416,10 @@ class IMDBTitle(object):
         except KeyError:
             generators = []
         # Add the poster generator
-        generators.append(self._fetch_posters(dest))
-        # Fetch the list of generators
-        await tornado.gen.multi(generators)
+        if dest is not None:
+            generators.append(self._fetch_posters(dest))
+            # Fetch the list of generators
+            await tornado.gen.multi(generators)
 
     async def _fetch_season(self, season, dest):
         '''Obtain a given season's episodes descriptions.'''
@@ -425,7 +432,8 @@ class IMDBTitle(object):
         parser.feed(response.body.decode('utf-8'))
         self._attrs['seasons'].update(parser.attrs)
         # Fetch the episodes stills
-        await self._fetch_stills(season, dest)
+        if dest is not None:
+            await self._fetch_stills(season, dest)
 
     async def _fetch_stills(self, season, dest):
         s = self._attrs['seasons'][season]

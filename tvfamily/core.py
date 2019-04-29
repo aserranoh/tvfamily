@@ -169,6 +169,10 @@ class Core(object):
         '''Return the poster of a given title.'''
         return self._titles_db.get_poster(imdb_id)
 
+    async def search(self, category, text):
+        '''Search titles by name in IMDB.'''
+        return (await self._titles_db.search(category, text))
+
     def get_title(self, imdb_id):
         '''Return the title with the given imdb_id.'''
         return self._titles_db.get_title(imdb_id)
@@ -192,12 +196,6 @@ class Core(object):
     async def run_scheduler(self):
         '''Start the scheduler.'''
         await self._scheduler.run()
-
-    # Functions to navigate through the titles
-
-    """async def search(self, title, category):
-        '''Search titles by name in IMDB.'''
-        return (await self._titles_db.search(title, category))"""
 
     # Torrent related functions
 
@@ -439,14 +437,19 @@ class TitlesDB(object):
         # Get the title
         imdb_title = await self._get_title_from_torrent(torrent, category)
         if imdb_title is not None:
-            # Fetch the IMDB data from the title
-            # title_path is the destination where to save the images
-            title_path = self._get_title_path(imdb_title.id)
-            self._create_db_path(title_path)
-            await imdb_title.fetch(title_path)
-            # Save the dbs to disk
-            self._save_imdb_title(imdb_title, title_path)
+            await self._imdb_title_fetch_and_save(imdb_title)
         return imdb_title
+
+    async def _imdb_title_fetch_and_save(
+            self, imdb_title, fetch_pictures=True):
+        '''Fetch the information of an imdb title and store it.'''
+        # Fetch the IMDB data from the title
+        # title_path is the destination where to save the images
+        title_path = self._get_title_path(imdb_title.id)
+        self._create_db_path(title_path)
+        await imdb_title.fetch(title_path if fetch_pictures else None)
+        # Save the dbs to disk
+        self._save_imdb_title(imdb_title, title_path)
 
     async def _get_title_from_torrent(self, torrent, category):
         '''Retrieves a title from the torrent name.'''
@@ -558,6 +561,15 @@ class TitlesDB(object):
         self._save_torrents_to_imdb()
         self._save_titles_not_found()
 
+    async def search(self, category, text):
+        '''Search titles by name in IMDB.'''
+        category = self._categories[category]
+        results = await tvfamily.imdb.search(text, category.imdb_type)
+        await tornado.gen.multi(
+            [self._imdb_title_fetch_and_save(x, False) for x in results])
+        titles = [Title(x) for x in results]
+        return titles
+
     def has_video(self, title_id, season=None, episode=None):
         '''Return True if the file for this media is downloaded.'''
         return self.get_video(title_id, season, episode) is not None
@@ -589,14 +601,6 @@ class TitlesDB(object):
         else:
             raise KeyError('Unknown media')
         return video
-
-    """async def search(self, title, category):
-        '''Search titles by name in IMDB.'''
-        category = self._categories[category]
-        results = await tvfamily.imdb.search(title, category.imdb_type)
-        titles = [category.get_title(x) for x in results]
-        await tornado.gen.multi([t.fetch() for t in titles])
-        return titles"""
 
 
 class Video(object):
@@ -706,7 +710,7 @@ class Title(object):
         return self.type.get_media(torrent)
 
     def get_plot(self):
-        return self.imdb_title['plot']
+        return self.imdb_title.get('plot')
 
     def get_poster_url(self):
         return self.imdb_title['poster_url']
@@ -715,7 +719,7 @@ class Title(object):
         return self.imdb_title['poster_url_small']
 
     def get_rating(self):
-        return self.imdb_title['rating']
+        return self.imdb_title.get('rating')
 
     def get_title(self):
         return self.imdb_title['title']
@@ -1079,9 +1083,9 @@ class TaskScheduler(object):
         while 1:
             start = time.time()
             # Execute tasks here (_fetch_torrents is a cascade task)
-            await self._fetch_top_torrents()
+            """await self._fetch_top_torrents()
             # End tasks
-            self.titles_db.save_databases()
+            self.titles_db.save_databases()"""
             logging.info('finished tasks in {} seconds'.format(
                 int(time.time() - start)))
             # Compute the next execution time

@@ -113,16 +113,6 @@ class SaveSettingsHandler(tvfamily.webcommon.BaseHandler):
         self.redirect('/')
 
 
-class SearchHandler(tvfamily.webcommon.BaseHandler):
-    '''Search a title.'''
-
-    async def get(self, category):
-        search_title = self.get_query_argument('title')
-        titles = await self._core.search(search_title, category)
-        self.render('index.html', categories=self._core.get_categories(),
-            current=category, medias=titles)
-
-
 class WebServer(tvfamily.httpserver.HTTPServer):
     '''The HTTP server that serves the pages to the user.'''
 
@@ -145,7 +135,6 @@ class WebServer(tvfamily.httpserver.HTTPServer):
                     {'path': 'data'}),
                 (r'/settings', SettingsHandler, d),
                 (r'/save-settings', SaveSettingsHandler, d),
-                (r'/search/(.+)', SearchHandler, d),
                 ]
             ws = tvfamily.webservice.WebService(self._core)
             handlers.extend(ws.get_handlers())

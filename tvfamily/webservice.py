@@ -164,11 +164,24 @@ class GetPosterHandler(tvfamily.webcommon.BaseHandler):
                 self.write(pic.read())
                 pic.close()
             else:
-                self.write(b'')
+                t = self._core.get_title(title_id)
+                self.redirect(t.get_poster_url())
         except (tornado.web.MissingArgumentError, KeyError):
             self.clear()
             self.set_status(400)
             self.finish('<html><body>Error</body></html>')
+
+class SearchHandler(tvfamily.webcommon.BaseHandler):
+    '''Search a title.'''
+
+    async def get(self):
+        try:
+            category = self.get_query_argument('category')
+            text = self.get_query_argument('text')
+            titles = await self._core.search(category, text)
+            self.write_json(search=[t.todict() for t in titles])
+        except Exception as e:
+            self.write_error(msg=str(e))
 
 class GetTitleHandler(tvfamily.webcommon.BaseHandler):
     '''Serve the title information.'''
@@ -283,6 +296,7 @@ class WebService(object):
             (r'/api/getcategories', GetCategoriesHandler, d),
             (r'/api/gettop', GetTopHandler, d),
             (r'/api/getposter', GetPosterHandler, d),
+            (r'/api/search', SearchHandler, d),
             (r'/api/gettitle', GetTitleHandler, d),
             (r'/api/getmediastatus', GetMediaStatusHandler, d),
             (r'/api/getvideo', GetVideoHandler, d),
