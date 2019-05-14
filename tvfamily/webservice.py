@@ -211,6 +211,23 @@ class GetMediaStatusHandler(tvfamily.webcommon.BaseHandler):
         except (tornado.web.MissingArgumentError, KeyError) as e:
             self.write_error(msg=str(e))
 
+class DownloadHandler(tvfamily.webcommon.BaseHandler):
+
+    def get(self):
+        try:
+            profile = self.get_query_argument('profile')
+            title_id = self.get_query_argument('id')
+            season = episode = None
+            try:
+                season = int(self.get_query_argument('season'))
+                episode = int(self.get_query_argument('episode'))
+            except tornado.web.MissingArgumentError:
+                pass
+            self._core.download(profile, title_id, season, episode)
+            self.write_json(code=0)
+        except (tornado.web.MissingArgumentError, KeyError) as e:
+            self.write_error(msg=str(e))
+
 class GetVideoHandler(tvfamily.webcommon.BaseHandler):
     '''Serves a video in chunks.'''
 
@@ -299,6 +316,7 @@ class WebService(object):
             (r'/api/search', SearchHandler, d),
             (r'/api/gettitle', GetTitleHandler, d),
             (r'/api/getmediastatus', GetMediaStatusHandler, d),
+            (r'/api/download', DownloadHandler, d),
             (r'/api/getvideo', GetVideoHandler, d),
         ]
 

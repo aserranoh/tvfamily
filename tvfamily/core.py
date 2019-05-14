@@ -21,11 +21,13 @@ along with tvfamily; see the file COPYING.  If not, see
 '''
 
 import datetime
+import functools
 import glob
 import grp
 import importlib
 import io
 import json
+import libtorrent
 import logging
 import os
 import PIL.Image
@@ -34,6 +36,7 @@ import re
 import sys
 import time
 import tornado.gen
+import tornado.ioloop
 
 import tvfamily.imdb
 import tvfamily.PTN
@@ -181,7 +184,7 @@ class Core(object):
         '''Return the status of a given media (downloaded, downloading or
         missing).
         '''
-        if self._titles_db.has_file(imdb_id, season, episode):
+        if self._titles_db.has_video(imdb_id, season, episode):
             return MediaStatus(MediaStatus.DOWNLOADED)
         else:
             status = self._torrent_engine.get_file_status(
@@ -199,6 +202,15 @@ class Core(object):
 
     # Torrent related functions
 
+    def download(self, profile, imdb_id, season=None, episode=None):
+        '''Start the download of a torrent.'''
+        # Get the user settings
+        settings = self._profiles_manager[profile].settings
+        filters = settings['torrents_filters']
+        # Download the title
+        title = self._titles_db.get_title(imdb_id)
+        self._torrent_engine.download(title, season, episode, filters)
+
     """def get_torrents_filters(self):
         '''Return the list of quality, codec and resolution possible values.'''
         return self._torrent_engine.get_filter_values()"""
@@ -208,12 +220,6 @@ class Core(object):
     def get_video(self, imdb_id, season=None, episode=None):
         '''Return a Video object from a title_id.'''
         return self._titles_db.get_video(imdb_id, season, episode)
-
-    """async def get_video_from_media(self, media):
-        '''Search a video in the local machine corresponding to this media
-        (a movie or a tv episode).
-        '''
-        return (await self._titles_db.get_video_from_media(media))"""
 
 
 class ProfilesManager(object):
@@ -524,21 +530,22 @@ class TitlesDB(object):
     def get_title(self, imdb_id):
         '''Return a title given its imdb_id.'''
         try:
-            return Title(self._load_imdb_title(imdb_id))
+            t = Title(self._load_imdb_title(imdb_id))
+            t.set_path(self._get_title_path(imdb_id))
+            return t
         except IOError:
             raise KeyError('title with imdb_id {} not found'.format(imdb_id))
 
     def get_poster(self, imdb_id):
         '''Return a file descriptor to the poster image for this title.'''
         title = self.get_title(imdb_id)
-        title_path = os.path.join(self._root_path, title.imdb_title.id)
         base_name = title.get_poster_url().rpartition('/')[-1]
         try:
-            f = open(os.path.join(title_path, base_name), 'rb')
+            f = open(os.path.join(title.get_path(), base_name), 'rb')
         except IOError:
             base_name = title.get_poster_url_small().rpartition('/')[-1]
             try:
-                f = open(os.path.join(title_path, base_name), 'rb')
+                f = open(os.path.join(title.get_path(), base_name), 'rb')
             except IOError:
                 f = None
         return f
@@ -675,10 +682,9 @@ class Video(object):
 class Title(object):
     '''Represents a title (a movie or tv series).'''
 
-    videos_path = None
-
     def __init__(self, imdb_title):
         self.imdb_title = imdb_title
+        self.path = None
         if self.imdb_title['type'] in Movie.TYPES:
             self.type = Movie(self)
         else:
@@ -723,6 +729,12 @@ class Title(object):
 
     def get_title(self):
         return self.imdb_title['title']
+
+    def get_path(self):
+        return self.path
+
+    def set_path(self, path):
+        self.path = path
 
     def todict(self):
         '''Return a dictionary with some of the attributes of this instance.'''
@@ -864,13 +876,16 @@ class MediaStatus(object):
     DOWNLOADED = 0
     DOWNLOADING = 1
     MISSING = 2
+    ERROR = 3
 
-    def __init__(self, status, progress=None):
+    def __init__(self, status, message='', progress=0):
         self.status = status
+        self.message = message
         self.progress = progress
 
     def todict(self):
-        return {'status': self.status, 'progress': self.progress}
+        return {'status': self.status, 'message': self.message,
+            'progress': self.progress}
 
 
 class TorrentEngine(object):
@@ -909,6 +924,8 @@ class TorrentEngine(object):
     _FILTER_CODEC = dict(zip(_CODEC_VALUES, _RE_CODEC))
     _FILTER_RESOLUTION = dict(zip(_RESOLUTION_VALUES, _RE_RESOLUTION))
 
+    _SLEEP_INTERVAL = 2
+
     def __init__(self, data_path, options):
         self.data_path = data_path
         # Path to the plugins files
@@ -917,6 +934,10 @@ class TorrentEngine(object):
         self._plugins = []
         # Global options
         self._options = options
+        # Dictionary of downloads
+        self._downloads = {}
+        # Libtorrent session
+        self._session = libtorrent.session()
 
     def top(self, category, filters):
         '''Return the filtered list of top torrents for a given category.
@@ -1049,7 +1070,7 @@ class TorrentEngine(object):
         return (self._QUALITY_VALUES, self._CODEC_VALUES,
             self._RESOLUTION_VALUES, self._3D_VALUES)
 
-    async def search(self, query):
+    async def search(self, query, filters):
         '''Search torrents by string.'''
         self._reload_plugins()
         results = await tornado.gen.multi(
@@ -1058,13 +1079,119 @@ class TorrentEngine(object):
         torrents = []
         for r in results:
             if r is not None:
-                torrents.extend(self._filter(r))
+                torrents.extend(self._filter(r, filters))
         torrents.sort(key=lambda x: x.seeders, reverse=True)
         return torrents
 
     def get_file_status(self, imdb_id, season=None, episode=None):
         '''Return the downloading status of a file.'''
-        return None
+        key = (imdb_id, season, episode)
+        try:
+            # The title is scheduled to be downloaded
+            m = self._downloads[key]
+            if m.error:
+                # There has been an error in the downloading process
+                status = MediaStatus(MediaStatus.ERROR, t.status)
+                del self._downloads[key]
+            else:
+                # The media is being downloaded correctly
+                status = MediaStatus(
+                    MediaStatus.DOWNLOADING, m.status, m.progress)
+        except KeyError:
+            status = None
+        return status
+
+    def download(self, title, season=None, episode=None, filters=None):
+        '''Start downloading the given media.'''
+        m = MediaDownload(title, season, episode)
+        k = m.get_key()
+        if k not in self._downloads:
+            self._downloads[k] = m
+            callback = functools.partial(self._start_download, m, filters)
+            tornado.ioloop.IOLoop.current().spawn_callback(callback)
+            if len(self._downloads) == 1:
+                tornado.ioloop.IOLoop.current().spawn_callback(
+                    self._manage_downloads)
+
+    async def _start_download(self, media_download, filters):
+        '''Adds the media download in background.'''
+        # Search the torrents for this media
+        media_download.status = 'Searching torrents...'
+        torrents = await self.search(media_download.get_query(), filters)
+        for t in torrents:
+            print(t)
+        if not torrents:
+            media_download.error = True
+            media_download.status = 'Torrents list empty'
+        else:
+            # Start downloading the torrent
+            media_download.status = 'Downloading metadata...'
+            params = {'save_path': media_download.title.get_path()}
+            media_download.handle = libtorrent.add_magnet_uri(
+                self._session, torrents[0].magnet, params)
+
+    async def _manage_downloads(self):
+        '''Periodicaly check the downloads unitl all of them have finished.'''
+        files_printed = False
+        while len(self._downloads):
+            for k, m in list(self._downloads.items()):
+                # Perform tasks for each download
+                h = m.handle
+                if h is None: continue
+                # The media has already been added to the torrent session
+                if not h.has_metadata(): continue
+                # Metadata received
+                s = h.status()
+                if s == libtorrent.torrent_status.seeding:
+                    # The download has finished
+                    m.status = 'Downloaded'
+                    m.progress = 100
+                    del self._downloads[k]
+                    callback = functools.partial(self._finish_download, m)
+                    tornado.ioloop.IOLoop.current().spawn_callback(callback)
+                else:
+                    m.status = 'Downloading... ({:.1f} kB/s)'.format(
+                        s.download_rate / 1000)
+                    m.progress = int(s.progress * 100)
+                    if not files_printed:
+                        info = h.get_torrent_info()
+                        for x in range(info.files().num_files()):
+                            print(info.files().file_path(x))
+                        files_printed = True
+            # Wait for the next iteration
+            await tornado.gen.sleep(self._SLEEP_INTERVAL)
+
+    async def _finish_download(self, media_download):
+        '''Perform final operations in a download.'''
+        # Move files
+        pass
+        
+
+
+class MediaDownload(object):
+    '''Represents a downloading torrent.'''
+
+    def __init__(self, title, season=None, episode=None):
+        self.title = title
+        self.season = season
+        self.episode = episode
+        self.status = 'Initializing...'
+        self.progress = 0
+        self.handle = None
+        self.error = False
+
+    def get_key(self):
+        '''Return the key that identifies this download.'''
+        return (self.title.imdb_title.id, self.season, self.episode)
+
+    def get_query(self):
+        '''Return the query to search the torrents.'''
+        if self.season is not None and self.episode is not None:
+            query = '{} S{:02d} E{:02d}'.format(
+                self.title.get_title(), self.season, self.episode)
+        else:
+            query = self.title.get_title()
+        return query
 
 
 class TaskScheduler(object):
@@ -1083,9 +1210,9 @@ class TaskScheduler(object):
         while 1:
             start = time.time()
             # Execute tasks here (_fetch_torrents is a cascade task)
-            """await self._fetch_top_torrents()
+            #await self._fetch_top_torrents()
             # End tasks
-            self.titles_db.save_databases()"""
+            #self.titles_db.save_databases()
             logging.info('finished tasks in {} seconds'.format(
                 int(time.time() - start)))
             # Compute the next execution time

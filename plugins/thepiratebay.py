@@ -50,7 +50,7 @@ _RE_SIZE = re.compile(r'Size ([\d.]+.*?[MG]iB)')
 _HTTP_HEADERS = {'Accept-Language': 'en-US'}
 
 
-class TorrentsListParser():
+class TorrentsListParser(object):
     '''Parse the TPB page that contains the top 100 torrents.'''
 
     def parse(self, html_doc):
@@ -79,22 +79,16 @@ class TorrentsListParser():
         return torrents
 
 
-class TorrentPageParser():
+class TorrentPageParser(object):
     '''Parse the TPB page that contains the description of a torrent.'''
 
-    def handle_starttag(self, tag, attrs):
-        if tag == 'a':
-            for a in attrs:
-                if a[0] == 'href':
-                    href = a[1]
-                elif a == ('title', 'Get this torrent'):
-                    self.magnet = href
-
-    def handle_data(self, data):
-        pass
-
-    def handle_endtag(self, tag):
-        pass
+    def parse(self, html_doc):
+        soup = BeautifulSoup(html_doc, 'html.parser')
+        for a in soup.find_all('a'):
+            title = a.get('title')
+            if title == 'Get this torrent':
+                magnet = a.get('href')
+        return magnet
 
 
 async def top(category, options):
@@ -112,8 +106,6 @@ async def top(category, options):
     for c in contents:
         parser = TorrentsListParser()
         torrents.extend(parser.parse(c.body.decode('utf-8')))
-    #for t in torrents:
-    #    print(t)
     return torrents
 
 def _get_server(options):
@@ -139,25 +131,20 @@ async def search(query, options):
     server = _get_server(options)
     query_params = {'q': query, 'video': 'on', 'page': '0', 'orderby': '99'}
     url = '{}/s/?{}'.format(server, urllib.parse.urlencode(query_params))
-    logging.info('fetching url {}...'.format(url))
     contents = await _request(http_client, url)
-    logging.info('received url {}'.format(url))
     # Parse the important information
     parser = TorrentsListParser()
-    parser.feed(contents.body.decode('utf-8'))
+    torrents = parser.parse(contents.body.decode('utf-8'))
     await tornado.gen.multi([_fetch_torrent_info(server, t)
-        for t in parser.torrents if not t.magnet.startswith('magnet')])
-    return parser.torrents
+        for t in torrents if not t.magnet.startswith('magnet')])
+    return torrents
 
 async def _fetch_torrent_info(server, torrent):
     '''Fetch the torrent info page.'''
     http_client = tornado.httpclient.AsyncHTTPClient()
     url = server + torrent.magnet
-    logging.info('fetching url {}...'.format(url))
     contents = await _request(http_client, url)
-    logging.info('received url {}'.format(url))
     # Parse the important information
     parser = TorrentPageParser()
-    parser.feed(contents.body.decode('utf-8'))
-    torrent.magnet = parser.magnet
+    torrent.magnet = parser.parse(contents.body.decode('utf-8'))
 
